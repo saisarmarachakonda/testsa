@@ -1,12 +1,8 @@
-# location_tag_single_class_train_rfdetr
+# location_tag_single_class_train_rfdetr/
 
-This folder contains the dedicated single-class RF-DETR pipeline focusing on `location_tag`.
-
-## Notebook: `location_tag_single_class_train_rfdetr.ipynb`
-- **Model**: `RFDETRBase` (RF-DETR Base)
-- **Target Category**: `location_tag` (All annotations mapped to class 0)
-- **Resolution**: `560`
-- **Optimizer & Schedule**: `Adam` (lr=5e-5, weight_decay=1e-4) with `cosine` decay
-- **Dual Logging**: Informative `print()` output in cells + `output_*/pipeline.log`
-- **Mode Toggle (Cell 2)**: `SAMPLE_SIZE = 1000` (test flow) vs `SAMPLE_SIZE = None` (full data)
-- **Dynamic Folders**: Automatically generates `dataset_*`, `output_*`, `inference_*`, and `model/` inside this directory
+Output directory for the single-class `location_tag` pipeline.
+Running `location_tag_single_class_train_rfdetr.ipynb` from the repository root generates:
+- `dataset_sample_1000/` or `dataset_full_data/`: Train, Val, and Test split images and `_annotations.coco.json`.
+- `output_sample_1000/` or `output_full_data/`: Training checkpoints and `pipeline.log`.
+- `inference_sample_1000/` or `inference_full_data/`: Test prediction JSON files.
+- `model/`: Exported best model checkpoint (`best_model_<mode>.pth`).
