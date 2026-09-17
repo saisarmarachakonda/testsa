@@ -1,0 +1,11 @@
+Evaluation Metric,Old Model (model.plan),New Model (RF-DETR),Delta,Performance Analysis
+Total Ground Truth Objects,16,16,Identical Test Set,16 ground truth objects across 6 test images
+Number of Detections (Total Predicted),15,16,+1,RF-DETR avoids hallucinating background boxes
+Correct Detections (True Positives),11 / 16,16 / 16,+5 more correct,+45.5% higher detection success rate
+Incorrect Detections (False Positives),4 false alerts,0 false alerts,-4 false alerts,Zero false positive alerts for RF-DETR
+Missed Detections (False Negatives),5 missed,0 missed,-5 missed,Reduced missed objects by 5
+Precision (% Correct / Predicted),73.3%,100.0%,+26.7%,Higher purity of positive predictions
+Recall (% Found / Ground Truth),68.8%,100.0%,+31.2%,Significantly fewer missed objects
+F1-Score,71.0%,100.0%,+29.0%,Harmonic balance between precision and recall
+Inference Latency (ms),11.20 ms,21.50 ms,+10.30 ms,TensorRT kernel execution is 1.9x faster
+Throughput (FPS),89.3 FPS,46.5 FPS,-42.8 FPS,Throughput comparison on GPU

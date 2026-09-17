@@ -1,0 +1,208 @@
+{
+  "info": {
+    "description": "Test Data for Model Evaluation Comparison",
+    "version": "1.0",
+    "year": 2026
+  },
+  "licenses": [],
+  "images": [
+    {
+      "id": 1,
+      "file_name": "test_shelf_001.jpg",
+      "width": 800,
+      "height": 600,
+      "date_captured": "2026-09-17"
+    },
+    {
+      "id": 2,
+      "file_name": "test_shelf_002.jpg",
+      "width": 800,
+      "height": 600,
+      "date_captured": "2026-09-17"
+    },
+    {
+      "id": 3,
+      "file_name": "test_shelf_003.jpg",
+      "width": 800,
+      "height": 600,
+      "date_captured": "2026-09-17"
+    },
+    {
+      "id": 4,
+      "file_name": "test_shelf_004.jpg",
+      "width": 800,
+      "height": 600,
+      "date_captured": "2026-09-17"
+    },
+    {
+      "id": 5,
+      "file_name": "test_shelf_005.jpg",
+      "width": 800,
+      "height": 600,
+      "date_captured": "2026-09-17"
+    }
+  ],
+  "annotations": [
+    {
+      "id": 1,
+      "image_id": 1,
+      "category_id": 0,
+      "bbox": [
+        278.0,
+        113.0,
+        107.0,
+        47.0
+      ],
+      "area": 5029.0,
+      "iscrowd": 0,
+      "segmentation": []
+    },
+    {
+      "id": 2,
+      "image_id": 1,
+      "category_id": 0,
+      "bbox": [
+        139.0,
+        443.0,
+        133.0,
+        57.0
+      ],
+      "area": 7581.0,
+      "iscrowd": 0,
+      "segmentation": []
+    },
+    {
+      "id": 3,
+      "image_id": 1,
+      "category_id": 0,
+      "bbox": [
+        145.0,
+        117.0,
+        92.0,
+        40.0
+      ],
+      "area": 3680.0,
+      "iscrowd": 0,
+      "segmentation": []
+    },
+    {
+      "id": 4,
+      "image_id": 2,
+      "category_id": 0,
+      "bbox": [
+        608.0,
+        277.0,
+        102.0,
+        60.0
+      ],
+      "area": 6120.0,
+      "iscrowd": 0,
+      "segmentation": []
+    },
+    {
+      "id": 5,
+      "image_id": 2,
+      "category_id": 0,
+      "bbox": [
+        334.0,
+        115.0,
+        118.0,
+        58.0
+      ],
+      "area": 6844.0,
+      "iscrowd": 0,
+      "segmentation": []
+    },
+    {
+      "id": 6,
+      "image_id": 2,
+      "category_id": 0,
+      "bbox": [
+        398.0,
+        274.0,
+        134.0,
+        53.0
+      ],
+      "area": 7102.0,
+      "iscrowd": 0,
+      "segmentation": []
+    },
+    {
+      "id": 7,
+      "image_id": 3,
+      "category_id": 0,
+      "bbox": [
+        149.0,
+        281.0,
+        95.0,
+        52.0
+      ],
+      "area": 4940.0,
+      "iscrowd": 0,
+      "segmentation": []
+    },
+    {
+      "id": 8,
+      "image_id": 4,
+      "category_id": 0,
+      "bbox": [
+        599.0,
+        122.0,
+        136.0,
+        54.0
+      ],
+      "area": 7344.0,
+      "iscrowd": 0,
+      "segmentation": []
+    },
+    {
+      "id": 9,
+      "image_id": 5,
+      "category_id": 0,
+      "bbox": [
+        246.0,
+        432.0,
+        129.0,
+        51.0
+      ],
+      "area": 6579.0,
+      "iscrowd": 0,
+      "segmentation": []
+    },
+    {
+      "id": 10,
+      "image_id": 5,
+      "category_id": 0,
+      "bbox": [
+        346.0,
+        117.0,
+        92.0,
+        47.0
+      ],
+      "area": 4324.0,
+      "iscrowd": 0,
+      "segmentation": []
+    },
+    {
+      "id": 11,
+      "image_id": 5,
+      "category_id": 0,
+      "bbox": [
+        334.0,
+        290.0,
+        96.0,
+        52.0
+      ],
+      "area": 4992.0,
+      "iscrowd": 0,
+      "segmentation": []
+    }
+  ],
+  "categories": [
+    {
+      "id": 0,
+      "name": "location_tag",
+      "supercategory": "none"
+    }
+  ]
+}
