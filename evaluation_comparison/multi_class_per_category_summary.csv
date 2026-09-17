@@ -1,4 +1,0 @@
-Category Name,Ground Truth Boxes,Old Model Detections,Old Model Recall,RF-DETR Detections,RF-DETR Recall,Recall Gain
-location_tag,5,"5 (4 Correct, 1 Inc)",80.0%,"5 (5 Correct, 0 Inc)",100.0%,+20.0%
-shelf_label,6,"7 (4 Correct, 3 Inc)",66.7%,"6 (6 Correct, 0 Inc)",100.0%,+33.3%
-aisle_sign,5,"3 (3 Correct, 0 Inc)",60.0%,"5 (5 Correct, 0 Inc)",100.0%,+40.0%

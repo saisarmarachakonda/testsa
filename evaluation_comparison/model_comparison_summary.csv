@@ -1,9 +1,0 @@
-Metric,Old Model (model.plan),New Model (RF-DETR),Absolute Delta,Relative Improvement
-mAP @ 50:95 (COCO),0.4507,0.9921,+0.5414,+120.13%
-mAP @ 50 (PASCAL VOC),0.7778,1.0000,+0.2222,+28.57%
-mAP @ 75 (Strict),0.7389,0.9500,+0.2111,+28.57%
-Precision (@ 0.50),0.7778,1.0000,+0.2222,+28.57%
-Recall (@ 0.50),0.6364,0.9091,+0.2727,+42.86%
-F1-Score (@ 0.50),0.7000,0.9524,+0.2524,+36.05%
-Mean Latency (ms),11.20 ms,21.50 ms,+10.30 ms,-92.0% faster
-Throughput (FPS),89.3 FPS,46.5 FPS,-42.8 FPS,-47.9%
