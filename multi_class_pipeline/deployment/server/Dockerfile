@@ -20,7 +20,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Pre-download PaddleOCR English detection and recognition models at build time
-RUN python -c "from paddleocr import PaddleOCR; PaddleOCR(use_angle_cls=True, lang='en', use_gpu=False)"
+RUN python -c "import os; os.environ['FLAGS_use_mkldnn']='0'; from paddleocr import PaddleOCR; PaddleOCR(lang='en', use_gpu=False)"
 
 # Copy model and application code
 COPY rfdetr_model.onnx .

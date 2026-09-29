@@ -65,14 +65,22 @@ def startup_engines():
 
     # 2. Initialize PaddleOCR Engine
     try:
+        os.environ["FLAGS_use_mkldnn"] = "0"
+        os.environ["PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT"] = "0"
         import logging
         logging.getLogger("ppocr").setLevel(logging.WARNING)
         from paddleocr import PaddleOCR
         use_gpu = (ort.get_device() == "GPU")
         try:
-            ocr_engine = PaddleOCR(use_angle_cls=True, lang="en", use_gpu=use_gpu)
+            ocr_engine = PaddleOCR(use_textline_orientation=True, lang="en", enable_mkldnn=False, use_gpu=use_gpu)
         except TypeError:
-            ocr_engine = PaddleOCR(use_angle_cls=True, lang="en")
+            try:
+                ocr_engine = PaddleOCR(use_textline_orientation=True, lang="en", enable_mkldnn=False)
+            except TypeError:
+                try:
+                    ocr_engine = PaddleOCR(use_angle_cls=True, lang="en", use_gpu=use_gpu)
+                except TypeError:
+                    ocr_engine = PaddleOCR(use_angle_cls=True, lang="en")
         print(f"[STARTUP] PaddleOCR initialized successfully (use_gpu={use_gpu}).")
     except Exception as e:
         print(f"[STARTUP NOTICE] PaddleOCR could not be initialized: {e}")
@@ -152,18 +160,50 @@ def run_paddle_ocr_on_crop(crop_img: Image.Image) -> Tuple[Optional[str], Option
         if crop_np.shape[0] < 4 or crop_np.shape[1] < 4:
             return None, None
             
-        ocr_res = ocr_engine.ocr(crop_np, cls=True)
-        if not ocr_res or not ocr_res[0]:
+        # Use predict instead of ocr for modern PaddleOCR pipelines
+        ocr_res = None
+        if hasattr(ocr_engine, "predict"):
+            try:
+                ocr_res = ocr_engine.predict(crop_np)
+            except Exception:
+                ocr_res = None
+        if ocr_res is None and hasattr(ocr_engine, "ocr"):
+            try:
+                ocr_res = ocr_engine.ocr(crop_np, cls=True)
+            except TypeError:
+                ocr_res = ocr_engine.ocr(crop_np)
+
+        if not ocr_res:
             return None, None
             
         texts = []
         confs = []
-        for line in ocr_res[0]:
-            txt = line[1][0].strip()
-            score = float(line[1][1])
-            if txt:
-                texts.append(txt)
-                confs.append(score)
+        for item in ocr_res:
+            if isinstance(item, dict):
+                for t, s in zip(item.get("rec_texts", []), item.get("rec_scores", [])):
+                    if t and str(t).strip():
+                        texts.append(str(t).strip())
+                        confs.append(float(s))
+            elif hasattr(item, "json") and isinstance(item.json, dict):
+                for t, s in zip(item.json.get("rec_texts", []), item.json.get("rec_scores", [])):
+                    if t and str(t).strip():
+                        texts.append(str(t).strip())
+                        confs.append(float(s))
+            elif hasattr(item, "rec_texts"):
+                for t, s in zip(getattr(item, "rec_texts", []), getattr(item, "rec_scores", [])):
+                    if t and str(t).strip():
+                        texts.append(str(t).strip())
+                        confs.append(float(s))
+            elif isinstance(item, list):
+                for line in item:
+                    if isinstance(line, (list, tuple)) and len(line) >= 2:
+                        txt_info = line[1]
+                        if isinstance(txt_info, (list, tuple)) and len(txt_info) >= 2:
+                            t = str(txt_info[0]).strip()
+                            s = float(txt_info[1])
+                            if t:
+                                texts.append(t)
+                                confs.append(s)
                 
         if texts:
             return " ".join(texts), round(float(np.mean(confs)), 4)
@@ -396,16 +436,46 @@ async def direct_ocr(
         raise HTTPException(status_code=400, detail=f"Failed to decode image: {e}")
         
     t_start = time.perf_counter()
-    ocr_res = ocr_engine.ocr(img_np, cls=True)
+    ocr_res = None
+    if hasattr(ocr_engine, "predict"):
+        try:
+            ocr_res = ocr_engine.predict(img_np)
+        except Exception:
+            ocr_res = None
+    if ocr_res is None and hasattr(ocr_engine, "ocr"):
+        try:
+            ocr_res = ocr_engine.ocr(img_np, cls=True)
+        except TypeError:
+            ocr_res = ocr_engine.ocr(img_np)
+            
     ocr_time_ms = round((time.perf_counter() - t_start) * 1000, 2)
     
     results = []
-    if ocr_res and ocr_res[0]:
-        for line in ocr_res[0]:
-            box_coords = [[float(p[0]), float(p[1])] for p in line[0]]
-            txt = line[1][0]
-            score = round(float(line[1][1]), 4)
-            results.append(OCRResult(text=txt, confidence=score, box=box_coords))
+    if ocr_res:
+        for item in ocr_res:
+            if isinstance(item, dict):
+                r_boxes = item.get("rec_polys", item.get("dt_polys", []))
+                r_texts = item.get("rec_texts", [])
+                r_scores = item.get("rec_scores", [])
+                for i, txt in enumerate(r_texts):
+                    box = [[float(p[0]), float(p[1])] for p in r_boxes[i]] if i < len(r_boxes) else []
+                    score = round(float(r_scores[i]), 4) if i < len(r_scores) else 1.0
+                    results.append(OCRResult(text=txt, confidence=score, box=box))
+            elif hasattr(item, "json") and isinstance(item.json, dict):
+                r_boxes = item.json.get("rec_polys", item.json.get("dt_polys", []))
+                r_texts = item.json.get("rec_texts", [])
+                r_scores = item.json.get("rec_scores", [])
+                for i, txt in enumerate(r_texts):
+                    box = [[float(p[0]), float(p[1])] for p in r_boxes[i]] if i < len(r_boxes) else []
+                    score = round(float(r_scores[i]), 4) if i < len(r_scores) else 1.0
+                    results.append(OCRResult(text=txt, confidence=score, box=box))
+            elif isinstance(item, list):
+                for line in item:
+                    if isinstance(line, (list, tuple)) and len(line) >= 2:
+                        box_coords = [[float(p[0]), float(p[1])] for p in line[0]] if isinstance(line[0], (list, tuple)) else []
+                        txt = line[1][0]
+                        score = round(float(line[1][1]), 4)
+                        results.append(OCRResult(text=txt, confidence=score, box=box_coords))
             
     return DirectOCRResponse(
         success=True,
