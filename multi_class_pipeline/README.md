@@ -10,6 +10,7 @@ All notebooks are organized in sequential order (01 through 09) within this sing
 
 | Step | Notebook | Description | Key Outputs / Artifacts |
 |---|---|---|---|
+| **00** | [`00_download_coco_files.ipynb`](00_download_coco_files.ipynb) | Multi-source dataset ingestion (Azure Blob, HTTP/Zip, Roboflow API, or local discovery) with cache validation and zero-copy image pooling | `coco_files/`, raw COCO annotations & images |
 | **01** | [`01_eda_annotations.ipynb`](01_eda_annotations.ipynb) | Exploratory Data Analysis of bounding boxes, aspect ratios, and category distributions | Statistical profiles & class distributions |
 | **02** | [`02_detect_and_audit_anomalies.ipynb`](02_detect_and_audit_anomalies.ipynb) | 8-rule automated anomaly detector (degenerate boxes, micro-clicks, giant boxes, IoU duplicates, etc.) | `anomalies_manifest.json`, `cleaned_dataset/` |
 | **03** | [`03_stratified_train_val_test_split.ipynb`](03_stratified_train_val_test_split.ipynb) | Iterative multi-label greedy stratification into **80% Train**, **10% Val**, and **10% Test** (strictly excluding anomalies) | `dataset_stratified/` |
@@ -26,6 +27,7 @@ All notebooks are organized in sequential order (01 through 09) within this sing
 
 ```
 multi_class_pipeline/
+├── 00_download_coco_files.ipynb                   # [Step 0 Notebook] Dataset download & ingestion
 ├── 01_eda_annotations.ipynb                       # [Step 1 Notebook] Exploratory Data Analysis
 ├── 02_detect_and_audit_anomalies.ipynb            # [Step 2 Notebook] 8-rule anomaly detector & audit
 ├── 03_stratified_train_val_test_split.ipynb       # [Step 3 Notebook] Multi-label 80/10/10 stratified split
@@ -76,6 +78,7 @@ multi_class_pipeline/
 ## Runtime Artifacts Generated During Execution
 
 When you run the notebooks in sequence, they will generate clean output folders directly in `multi_class_pipeline/`:
+- `coco_files/` (from Step 00) — Ingested COCO JSON files & centralized raw image storage
 - `anomalies_manifest.json` & `cleaned_dataset/` (from Step 02)
 - `dataset_stratified/` (from Step 03) — Zero-copy architecture with master image repository
 - `checkpoints/<MODEL_VERSION>/` & `model/model_registry.json` (from Step 04) — Version-isolated models & checkpoints
