@@ -47,12 +47,39 @@ multi_class_pipeline/
 
 ---
 
+---
+
+## Engineering Features
+
+### 1. Model Versioning & Central Registry
+- **Semantic Versioning (`MODEL_VERSION`)**: Configure training versions via environment variable `export MODEL_VERSION="v1.2.0"` or directly in [`04_train_rfdetr_clean_data.ipynb`](04_train_rfdetr_clean_data.ipynb) (e.g. `v1.1.0-precision-clean`).
+- **Version-Isolated Checkpoints**: Intermediate checkpoints are safely isolated in `checkpoints/<MODEL_VERSION>/` so subsequent runs never overwrite prior checkpoint history. A dynamic `checkpoints/latest` pointer is automatically maintained.
+- **Version-Tagged Exports**: Best weights are saved as `model/rfdetr_best_<VERSION>.pth` and `model/rfdetr_best_precision_<VERSION>.pth`, alongside canonical aliases (`best_model.pth`, `best_model_precision.pth`).
+- **Central Model Registry (`model_registry.json`)**: Automatically records all trained model versions, timestamps, hyperparameters, best epochs, and evaluation metrics (Precision, Recall, F1, mAP50, mAP50-95).
+- **Downstream Auto-Discovery**: Prediction ([`05`](05_predict_rfdetr_images.ipynb)), Evaluation ([`06`](06_evaluate_rfdetr_clean_data.ipynb)), and ONNX Export ([`08`](08_convert_rfdetr_to_onnx.ipynb) / [`09`](09_convert_rfdetr_to_onnx_and_deploy_aks.ipynb)) automatically discover the active version from `model_registry.json` or honor `MODEL_VERSION`.
+
+### 2. Skip Download If Images Exist (Cache Validation)
+- All image acquisition logic performs an instant pre-flight check:
+  ```python
+  if dest_path.exists() and dest_path.stat().st_size > 0:
+      return dest_path  # Skips download immediately
+  ```
+- Re-running notebooks or resuming training completely bypasses network downloads for any image already on disk.
+
+### 3. Zero-Copy Architecture (Save Disk Space)
+- **Single Shared Master Image Storage**: Images reside in a single central master repository (`coco_files/images` or `dataset_stratified/images`).
+- **Zero Redundant Copying**: Dataset splits (`train/`, `val/`, `test/`) store only lightweight COCO JSON metadata and soft symbolic links (`train/images -> ../images`).
+- **Multi-Path DataLoader**: `COCODetectionDataset` dynamically resolves images directly from the shared pool, eliminating duplicate image copies across training and test splits.
+
+---
+
 ## Runtime Artifacts Generated During Execution
 
 When you run the notebooks in sequence, they will generate clean output folders directly in `multi_class_pipeline/`:
 - `anomalies_manifest.json` & `cleaned_dataset/` (from Step 02)
-- `dataset_stratified/` (from Step 03)
-- `checkpoints/` & `model/` (from Step 04)
+- `dataset_stratified/` (from Step 03) — Zero-copy architecture with master image repository
+- `checkpoints/<MODEL_VERSION>/` & `model/model_registry.json` (from Step 04) — Version-isolated models & checkpoints
 - `predictions/` (from Step 05)
 - `evaluation_results/` (from Step 06)
 - `deployment/models/rfdetr_model.onnx` (from Step 08)
+
