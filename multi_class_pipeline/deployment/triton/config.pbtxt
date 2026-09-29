@@ -1,0 +1,47 @@
+# Triton Model Repository Configuration for RF-DETR TensorRT Engine
+# Place under: <fileshare>/models/rfdetr/config.pbtxt
+
+name: "rfdetr"
+platform: "tensorrt_plan"
+max_batch_size: 4
+
+input [
+  {
+    name: "images"
+    data_type: TYPE_FP32
+    dims: [ 3, 560, 560 ]
+  }
+]
+
+output [
+  {
+    name: "scores"
+    data_type: TYPE_FP32
+    dims: [ 300, 3 ]
+  },
+  {
+    name: "boxes"
+    data_type: TYPE_FP32
+    dims: [ 300, 4 ]
+  }
+]
+
+# Version Policy: serve latest version or all versions
+version_policy: {
+  latest: {
+    num_versions: 1
+  }
+}
+
+# GPU Execution Instance
+instance_group [
+  {
+    count: 1
+    kind: KIND_GPU
+  }
+]
+
+# Dynamic Batching (Optional - groups requests within delay budget)
+dynamic_batching {
+  max_queue_delay_microseconds: 5000
+}
