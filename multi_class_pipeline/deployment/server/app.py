@@ -65,9 +65,14 @@ def startup_engines():
 
     # 2. Initialize PaddleOCR Engine
     try:
+        import logging
+        logging.getLogger("ppocr").setLevel(logging.WARNING)
         from paddleocr import PaddleOCR
         use_gpu = (ort.get_device() == "GPU")
-        ocr_engine = PaddleOCR(use_angle_cls=True, lang="en", use_gpu=use_gpu, show_log=False)
+        try:
+            ocr_engine = PaddleOCR(use_angle_cls=True, lang="en", use_gpu=use_gpu)
+        except TypeError:
+            ocr_engine = PaddleOCR(use_angle_cls=True, lang="en")
         print(f"[STARTUP] PaddleOCR initialized successfully (use_gpu={use_gpu}).")
     except Exception as e:
         print(f"[STARTUP NOTICE] PaddleOCR could not be initialized: {e}")
