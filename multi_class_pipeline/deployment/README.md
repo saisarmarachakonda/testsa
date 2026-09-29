@@ -80,22 +80,62 @@ python deploy.py
 ---
 
 ### Step 3: Establish Secure Port-Forwarding
-To interact with the private AKS service from your local workstation:
 
+Connect to the enterprise AKS cluster and establish port-forward tunnels:
+
+```bash
+# 1. Set Subscription & Cluster Credentials
+export AZURE_SUBSCRIPTION="<YOUR_AZURE_SUBSCRIPTION>"
+export AZURE_RESOURCE_GROUP="<YOUR_RESOURCE_GROUP>"
+export AKS_CLUSTER_NAME="<YOUR_AKS_CLUSTER_NAME>"
+export K8S_NAMESPACE="<YOUR_NAMESPACE>"
+
+az account set --subscription "$AZURE_SUBSCRIPTION"
+az aks get-credentials --resource-group "$AZURE_RESOURCE_GROUP" --name "$AKS_CLUSTER_NAME"
+kubectl config set-context --current --namespace="$K8S_NAMESPACE"
+
+# 2. Inspect Running Pods
+kubectl get pods -n "$K8S_NAMESPACE"
+
+# 3. Port Forward TensorRT Pods
+# Terminal 1 (OCR Microservice):
+kubectl port-forward <OCR_POD_NAME> 8002:8001 -n "$K8S_NAMESPACE"
+
+# Terminal 2 (Detection Microservice):
+kubectl port-forward <DETECTION_POD_NAME> 8001:8001 -n "$K8S_NAMESPACE"
+```
+
+Or execute the all-in-one script which auto-discovers pod IDs and manages both background tunnels:
 ```bash
 ./port_forward.sh
 ```
 
-This establishes an encrypted tunnel over the authenticated Kubernetes control plane:
-- **Local Address**: `http://127.0.0.1:8000`
-- **Swagger UI**: `http://127.0.0.1:8000/docs`
+---
+
+### Step 4: Launch Unified Gateway Server
+
+On a new terminal:
+```bash
+# On a new terminal:
+cd multi_class_pipeline/deployment
+python3 app.py
+```
+
+The gateway server:
+- Runs locally on **port 8000** (`http://127.0.0.1:8000`)
+- Routes detection queries to **`http://127.0.0.1:8001`** (TensorRT V100 Detection Pod)
+- Routes OCR queries to **`http://127.0.0.1:8002`** (TensorRT V100 OCR Pod)
+- Performs **Weighted Box Fusion (Averaging)** and **Boundary Box Shrinkage (4% insetting)** on crops before feeding to PaddleOCR.
+
+Interactive endpoints:
+- **Swagger Docs**: `http://127.0.0.1:8000/docs`
 - **Health Check**: `http://127.0.0.1:8000/healthz`
 - **Predict (Detection + OCR)**: `POST http://127.0.0.1:8000/predict?run_ocr=true`
 - **Direct OCR**: `POST http://127.0.0.1:8000/ocr`
 
 ---
 
-### Step 4: Run Predictions via Test Client
+### Step 5: Run Predictions via Test Client
 In another terminal, run:
 
 ```bash
@@ -114,3 +154,4 @@ The client will:
 - Send the image to `POST /predict`.
 - Print detections, OCR recognized strings (e.g. `LOC-A-12-04`), confidence scores, and latency.
 - Save a visualization image with bounding boxes and recognized text labels to `prediction_result.jpg`.
+
