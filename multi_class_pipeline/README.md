@@ -12,14 +12,16 @@ All notebooks are organized in sequential order (01 through 09) within this sing
 |---|---|---|---|
 | **00** | [`00_download_coco_files.ipynb`](00_download_coco_files.ipynb) | Multi-source dataset ingestion (Azure Blob, HTTP/Zip, Roboflow API, or local discovery) with cache validation and zero-copy image pooling | `coco_files/`, raw COCO annotations & images |
 | **01** | [`01_eda_annotations.ipynb`](01_eda_annotations.ipynb) | Exploratory Data Analysis of bounding boxes, aspect ratios, and category distributions | Statistical profiles & class distributions |
-| **02** | [`02_detect_and_audit_anomalies.ipynb`](02_detect_and_audit_anomalies.ipynb) | 8-rule automated anomaly detector (degenerate boxes, micro-clicks, giant boxes, IoU duplicates, etc.) | `anomalies_manifest.json`, `cleaned_dataset/` |
+| **02** | [`02_detect_and_audit_anomalies.ipynb`](02_detect_and_audit_anomalies.ipynb) | 8-rule automated anomaly detector with **4-panel diagnostic graphs** & **visual sample overlays** (red anomaly boxes vs green clean tags) | `anomalies_manifest.json`, `cleaned_dataset/` |
 | **03** | [`03_stratified_train_val_test_split.ipynb`](03_stratified_train_val_test_split.ipynb) | Iterative multi-label greedy stratification into **80% Train**, **10% Val**, and **10% Test** (strictly excluding anomalies) | `dataset_stratified/` |
-| **04** | [`04_train_rfdetr_clean_data.ipynb`](04_train_rfdetr_clean_data.ipynb) | Precision-driven training on clean data with Step A loss breakdown, Step B label verification, Step C frozen DINOv2 backbone, and boundary recalibration | `model/rfdetr_best_precision.pth`, `checkpoints/` |
-| **05** | [`05_predict_rfdetr_images.ipynb`](05_predict_rfdetr_images.ipynb) | Post-training inference: Bounding-box averaging + Boundary-box shrinkage + **PaddleOCR** tag recognition | `predictions/` |
-| **06** | [`06_evaluate_rfdetr_clean_data.ipynb`](06_evaluate_rfdetr_clean_data.ipynb) | Benchmark evaluation on held-out clean test set: COCO standard mAP@50:95, multi-threshold sweeps, confusion matrix, 6-panel dashboard, and 100% FP/FN case inspector | `evaluation_results/` |
-| **07** | [`07_evaluate_anomalies_audit.ipynb`](07_evaluate_anomalies_audit.ipynb) | Robustness audit specifically on flagged anomaly images to evaluate model behavior against labeler noise | Anomaly audit reports & case visualizer |
-| **08** | [`08_convert_rfdetr_to_onnx.ipynb`](08_convert_rfdetr_to_onnx.ipynb) | Standalone conversion of fine-tuned RF-DETR model to ONNX runtime format + verification with PaddleOCR | `deployment/models/rfdetr_model.onnx` |
-| **09** | [`09_convert_rfdetr_to_onnx_and_deploy_aks.ipynb`](09_convert_rfdetr_to_onnx_and_deploy_aks.ipynb) | Interactive end-to-end cloud deployment notebook: ONNX export + ACR build + AKS deployment (Internal LoadBalancer, Zero Public IP) | Live AKS Deployment Manifests & Tests |
+| **04** | [`04_train_rfdetr_clean_data.ipynb`](04_train_rfdetr_clean_data.ipynb) | Precision-driven training on clean data with **robust training resumption**, auto-epoch extension, Step A loss breakdown, and Step C frozen backbone | `model/rfdetr_best_precision.pth`, `checkpoints/` |
+| **05** | [`05_postprocessing_techniques.ipynb`](05_postprocessing_techniques.ipynb) | Dedicated postprocessing suite: **Boundary-box shrinkage (4%)**, **Weighted Box Fusion (WBF)**, per-class confidence tuning & PaddleOCR | Recalibrated bounding boxes & OCR tags |
+| **06** | [`06_predict_rfdetr_images.ipynb`](06_predict_rfdetr_images.ipynb) | Post-training batch inference with **sample visual predictions gallery** (color-coded boxes, confidence scores, OCR text badges) | `predictions/` |
+| **07** | [`07_evaluate_rfdetr_clean_data.ipynb`](07_evaluate_rfdetr_clean_data.ipynb) | Benchmark evaluation on held-out clean test set: COCO standard mAP@50:95, multi-threshold sweeps, confusion matrix, and 100% FP/FN case inspector | `evaluation_results/` |
+| **08** | [`08_evaluate_anomalies_audit.ipynb`](08_evaluate_anomalies_audit.ipynb) | Robustness audit specifically on flagged anomaly images to evaluate model behavior against labeler noise | Anomaly audit reports & case visualizer |
+| **09** | [`09_convert_rfdetr_to_onnx.ipynb`](09_convert_rfdetr_to_onnx.ipynb) | Standalone conversion of fine-tuned RF-DETR model to ONNX runtime format + verification with PaddleOCR | `deployment/models/rfdetr_model.onnx` |
+| **10** | [`10_evaluate_compare_rfdetr_multiclass.ipynb`](10_evaluate_compare_rfdetr_multiclass.ipynb) | 3-way evaluation benchmark: **Ground Truth vs. Old Model Endpoint vs. New RF-DETR Model** with 3-panel visualizer and metrics table | Head-to-head comparison metrics & showcase |
+| **11** | [`11_convert_rfdetr_to_onnx_and_deploy_aks.ipynb`](11_convert_rfdetr_to_onnx_and_deploy_aks.ipynb) | Interactive end-to-end cloud deployment notebook: ONNX export + ACR build + AKS deployment (Internal LoadBalancer, Zero Public IP) | Live AKS Deployment Manifests & Tests |
 
 ---
 
@@ -27,16 +29,18 @@ All notebooks are organized in sequential order (01 through 09) within this sing
 
 ```
 multi_class_pipeline/
-├── 00_download_coco_files.ipynb                   # [Step 0 Notebook] Dataset download & ingestion
-├── 01_eda_annotations.ipynb                       # [Step 1 Notebook] Exploratory Data Analysis
-├── 02_detect_and_audit_anomalies.ipynb            # [Step 2 Notebook] 8-rule anomaly detector & audit
-├── 03_stratified_train_val_test_split.ipynb       # [Step 3 Notebook] Multi-label 80/10/10 stratified split
-├── 04_train_rfdetr_clean_data.ipynb               # [Step 4 Notebook] Metric precision training (clean data)
-├── 05_predict_rfdetr_images.ipynb                 # [Step 5 Notebook] Inference + Recalibration + PaddleOCR
-├── 06_evaluate_rfdetr_clean_data.ipynb            # [Step 6 Notebook] Benchmark evaluation on clean test set
-├── 07_evaluate_anomalies_audit.ipynb              # [Step 7 Notebook] Anomaly robustness & labeler error audit
-├── 08_convert_rfdetr_to_onnx.ipynb                # [Step 8 Notebook] Standalone ONNX model export & test
-├── 09_convert_rfdetr_to_onnx_and_deploy_aks.ipynb # [Step 9 Notebook] Interactive AKS deployment notebook
+├── 00_download_coco_files.ipynb                   # [Step 00 Notebook] Dataset download & ingestion
+├── 01_eda_annotations.ipynb                       # [Step 01 Notebook] Exploratory Data Analysis
+├── 02_detect_and_audit_anomalies.ipynb            # [Step 02 Notebook] 8-rule anomaly detector & graphs
+├── 03_stratified_train_val_test_split.ipynb       # [Step 03 Notebook] Multi-label 80/10/10 stratified split
+├── 04_train_rfdetr_clean_data.ipynb               # [Step 04 Notebook] Metric precision training & resumption
+├── 05_postprocessing_techniques.ipynb             # [Step 05 Notebook] Boundary shrinkage, WBF & OCR
+├── 06_predict_rfdetr_images.ipynb                 # [Step 06 Notebook] Inference + Sample Predictions Gallery
+├── 07_evaluate_rfdetr_clean_data.ipynb            # [Step 07 Notebook] Benchmark evaluation on clean test set
+├── 08_evaluate_anomalies_audit.ipynb              # [Step 08 Notebook] Anomaly robustness & labeler error audit
+├── 09_convert_rfdetr_to_onnx.ipynb                # [Step 09 Notebook] Standalone ONNX model export & test
+├── 10_evaluate_compare_rfdetr_multiclass.ipynb    # [Step 10 Notebook] Ground Truth vs Old vs New Model
+├── 11_convert_rfdetr_to_onnx_and_deploy_aks.ipynb # [Step 11 Notebook] Interactive AKS deployment notebook
 ├── README.md                                      # This guide
 └── deployment/                                    # Production AKS microservice & deployment scripts
     ├── server/                                    # FastAPI + PaddleOCR + Dockerfile
