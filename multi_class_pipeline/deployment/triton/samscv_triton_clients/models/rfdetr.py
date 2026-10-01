@@ -2,8 +2,13 @@
 models/rfdetr.py: Production Triton Client for RF-DETR Object Detection.
 Part of SamsCV-Triton-Clients repository.
 
-Implements preprocessing, Triton gRPC inference, and postprocessing
-to output standard {"description", "score", "bbox"} dictionaries.
+Supports both:
+1. Production unified tensor layout (tagdet_rt):
+   - Input:  images [1, 3, 640, 480]
+   - Output: output [1, 18900, 7] ([cx, cy, w, h, s_0, s_1, s_2])
+2. Decoupled tensors layout:
+   - Input:  images [B, 3, H, W]
+   - Output: scores [B, 300, C], boxes [B, 300, 4]
 """
 
 import os
@@ -41,10 +46,9 @@ class RFDetrTritonClient(TritonClient):
     Triton Client for RF-DETR Multi-Class Object Detection Model.
 
     Inputs:
-        images: FP32 tensor [batch_size, 3, resolution, resolution]
+        images: FP32 tensor [1, 3, 640, 480] (or [batch, 3, H, W])
     Outputs:
-        scores: FP32 tensor [batch_size, 300, num_classes]
-        boxes:  FP32 tensor [batch_size, 300, 4] (cx, cy, w, h normalized [0, 1])
+        output: FP32 tensor [1, 18900, 7] (or decoupled scores [300, C], boxes [300, 4])
 
     Returns:
         List of detection dicts:
@@ -59,8 +63,9 @@ class RFDetrTritonClient(TritonClient):
 
     # Categories discovered in multi_class_train_rfdetr.ipynb (contiguously 0-indexed)
     DEFAULT_CLASSES = ["Blue_aisle", "blue_bay", "location_tag"]
-    DEFAULT_RESOLUTION = int(os.getenv("RFDETR_RESOLUTION", "1008"))
     DEFAULT_MODEL_NAME = os.getenv("RFDETR_MODEL_NAME", "tagdet_rt")
+    DEFAULT_INPUT_HEIGHT = int(os.getenv("RFDETR_INPUT_HEIGHT", "640"))
+    DEFAULT_INPUT_WIDTH = int(os.getenv("RFDETR_INPUT_WIDTH", "480"))
     IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
     IMAGENET_STD  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 
@@ -70,11 +75,13 @@ class RFDetrTritonClient(TritonClient):
         model_name: str = DEFAULT_MODEL_NAME,
         model_version: str = "2",
         classes: Optional[List[str]] = None,
-        resolution: int = DEFAULT_RESOLUTION,
+        input_height: int = DEFAULT_INPUT_HEIGHT,
+        input_width: int = DEFAULT_INPUT_WIDTH,
         conf_threshold: float = 0.50,
         input_name: str = "images",
-        scores_output_name: str = "scores",
-        boxes_output_name: str = "boxes",
+        output_name: str = "output",
+        scores_output_name: Optional[str] = None,
+        boxes_output_name: Optional[str] = None,
         bbox_format: str = "ymin_xmin_ymax_xmax",  # standard SamsCV convention
         pixel_coordinates: bool = True,
         shrink_factor: float = 0.96,               # 4% boundary shrinkage
@@ -83,9 +90,11 @@ class RFDetrTritonClient(TritonClient):
     ):
         super().__init__(url=url, model_name=model_name, model_version=model_version, **kwargs)
         self.classes = classes or self.DEFAULT_CLASSES
-        self.resolution = resolution
+        self.input_height = input_height
+        self.input_width = input_width
         self.conf_threshold = conf_threshold
         self.input_name = input_name
+        self.output_name = output_name
         self.scores_output_name = scores_output_name
         self.boxes_output_name = boxes_output_name
         self.bbox_format = bbox_format
@@ -95,9 +104,9 @@ class RFDetrTritonClient(TritonClient):
 
     def preprocess(self, image: Union[Image.Image, np.ndarray]) -> Tuple[np.ndarray, int, int]:
         """
-        Step 5: Preprocess input image to match RF-DETR training:
+        Step 5: Preprocess input image to match tagdet_rt Triton input binding [1, 3, 640, 480]:
         1. RGB conversion & size extraction
-        2. Bilinear resize to resolution x resolution
+        2. Bilinear resize to (input_width, input_height) -> (480, 640)
         3. Normalization (ImageNet mean & std)
         4. Transpose to NCHW [1, 3, H, W] float32
         """
@@ -115,8 +124,8 @@ class RFDetrTritonClient(TritonClient):
 
         orig_w, orig_h = pil_img.size
 
-        # Resize
-        resized = pil_img.resize((self.resolution, self.resolution), Image.BILINEAR)
+        # Resize to (width, height)
+        resized = pil_img.resize((self.input_width, self.input_height), Image.BILINEAR)
         img_np = np.array(resized, dtype=np.float32) / 255.0
 
         # Normalize: (img - mean) / std
@@ -126,9 +135,10 @@ class RFDetrTritonClient(TritonClient):
         input_tensor = np.transpose(img_norm, (2, 0, 1))[np.newaxis, ...].astype(np.float32)
         return input_tensor, orig_w, orig_h
 
-    def infer(self, input_tensor: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    def infer(self, input_tensor: np.ndarray) -> Union[Tuple[np.ndarray, np.ndarray], np.ndarray]:
         """
         Step 6: Send tensor using exact input name and call self.client.infer()
+        Supports both single output tensor [1, 18900, 7] and decoupled (scores, boxes).
         """
         if not self.client:
             raise RuntimeError("Triton gRPC client is not initialized.")
@@ -136,40 +146,52 @@ class RFDetrTritonClient(TritonClient):
         inputs = [InferInput(self.input_name, input_tensor.shape, "FP32")]
         inputs[0].set_data_from_numpy(input_tensor)
 
-        outputs = [
-            InferRequestedOutput(self.scores_output_name),
-            InferRequestedOutput(self.boxes_output_name)
-        ]
+        # Mode A: Decoupled scores and boxes
+        if self.scores_output_name and self.boxes_output_name:
+            outputs = [
+                InferRequestedOutput(self.scores_output_name),
+                InferRequestedOutput(self.boxes_output_name)
+            ]
+            resp = self.client.infer(
+                model_name=self.model_name,
+                model_version=self.model_version,
+                inputs=inputs,
+                outputs=outputs
+            )
+            scores = resp.as_numpy(self.scores_output_name)
+            boxes = resp.as_numpy(self.boxes_output_name)
+            return scores, boxes
 
+        # Mode B: Production tagdet_rt single tensor "output" [1, 18900, 7]
+        outputs = [InferRequestedOutput(self.output_name)]
         resp = self.client.infer(
             model_name=self.model_name,
             model_version=self.model_version,
             inputs=inputs,
             outputs=outputs
         )
-
-        scores = resp.as_numpy(self.scores_output_name)
-        boxes = resp.as_numpy(self.boxes_output_name)
-        return scores, boxes
+        return resp.as_numpy(self.output_name)
 
     def postprocess(
         self,
-        scores: np.ndarray,
-        boxes: np.ndarray,
+        inference_output: Union[Tuple[np.ndarray, np.ndarray], np.ndarray],
         orig_w: int,
         orig_h: int
     ) -> List[Dict[str, Any]]:
         """
         Step 7: Postprocess raw outputs:
-        1. Sigmoid if logits
-        2. Argmax across class dimension
-        3. Filter by conf_threshold
-        4. Convert cxcywh -> target bbox format [ymin, xmin, ymax, xmax]
-        5. Apply boundary-box shrinkage (4%) to match warehouse annotations
-        6. Return standard [{"description", "score", "bbox"}, ...]
+        - If tuple (scores, boxes): unpacks directly.
+        - If single array [1, 18900, 7]: splits columns 0..3 (boxes) and 4..6 (scores).
+        Filters by conf_threshold, applies 4% boundary shrinkage, converts to bbox format.
         """
-        batch_scores = scores[0]  # [300, num_classes]
-        batch_boxes = boxes[0]    # [300, 4]
+        if isinstance(inference_output, tuple):
+            scores, boxes = inference_output
+            batch_scores = scores[0]  # [N, num_classes]
+            batch_boxes = boxes[0]    # [N, 4]
+        else:
+            raw_out = inference_output[0]  # [18900, 7]
+            batch_boxes = raw_out[:, :4]   # [18900, 4] cx, cy, w, h
+            batch_scores = raw_out[:, 4:]  # [18900, num_classes]
 
         # Apply sigmoid if scores appear to be unnormalized logits
         if batch_scores.min() < 0.0 or batch_scores.max() > 1.0:
@@ -185,6 +207,10 @@ class RFDetrTritonClient(TritonClient):
             cid = int(class_ids[idx])
             score = float(max_scores[idx])
             cx, cy, w, h = batch_boxes[idx]
+
+            # Discard padding or invalid boxes
+            if w <= 0.0 or h <= 0.0 or score <= 0.0:
+                continue
 
             # Box conversion: cxcywh (0-1) -> x1, y1, x2, y2
             x1 = max(0.0, float(cx - w / 2.0))
@@ -236,5 +262,5 @@ class RFDetrTritonClient(TritonClient):
         preprocess -> infer -> postprocess -> detections
         """
         input_tensor, orig_w, orig_h = self.preprocess(image)
-        scores, boxes = self.infer(input_tensor)
-        return self.postprocess(scores, boxes, orig_w, orig_h)
+        raw_output = self.infer(input_tensor)
+        return self.postprocess(raw_output, orig_w, orig_h)
