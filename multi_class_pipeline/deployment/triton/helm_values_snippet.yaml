@@ -6,7 +6,7 @@ env:
   USE_RFDETR_TAGDET: "true"
 
   # Triton Model Name and Version
-  RFDETR_MODEL_NAME: "rfdetr"
+  RFDETR_MODEL_NAME: "tagdet_rt"
   RFDETR_MODEL_VERSION: "2"
 
   # Triton gRPC Service URL within the AKS cluster (or localhost:8001 via port-forward)

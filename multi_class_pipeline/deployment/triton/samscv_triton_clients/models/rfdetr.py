@@ -6,6 +6,7 @@ Implements preprocessing, Triton gRPC inference, and postprocessing
 to output standard {"description", "score", "bbox"} dictionaries.
 """
 
+import os
 from typing import List, Dict, Any, Union, Tuple, Optional
 import numpy as np
 from PIL import Image
@@ -56,15 +57,17 @@ class RFDetrTritonClient(TritonClient):
         ]
     """
 
-    DEFAULT_CLASSES = ["blue_aisle", "blue_bay", "location_tag"]
-    DEFAULT_RESOLUTION = 560
+    # Categories discovered in multi_class_train_rfdetr.ipynb (contiguously 0-indexed)
+    DEFAULT_CLASSES = ["Blue_aisle", "blue_bay", "location_tag"]
+    DEFAULT_RESOLUTION = int(os.getenv("RFDETR_RESOLUTION", "1008"))
+    DEFAULT_MODEL_NAME = os.getenv("RFDETR_MODEL_NAME", "tagdet_rt")
     IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
     IMAGENET_STD  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 
     def __init__(
         self,
         url: str,
-        model_name: str = "rfdetr",
+        model_name: str = DEFAULT_MODEL_NAME,
         model_version: str = "2",
         classes: Optional[List[str]] = None,
         resolution: int = DEFAULT_RESOLUTION,

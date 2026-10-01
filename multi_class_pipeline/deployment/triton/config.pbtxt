@@ -1,7 +1,7 @@
-# Triton Model Repository Configuration for RF-DETR TensorRT Engine
-# Place under: <fileshare>/models/rfdetr/config.pbtxt
+# Triton Model Repository Configuration for RF-DETR Multi-Class TensorRT Engine
+# File Share: aks-iras-t4-floor-models/tagdet_rt/config.pbtxt (or rfdetr/config.pbtxt)
 
-name: "rfdetr"
+name: "tagdet_rt"
 platform: "tensorrt_plan"
 max_batch_size: 4
 
@@ -9,7 +9,7 @@ input [
   {
     name: "images"
     data_type: TYPE_FP32
-    dims: [ 3, 560, 560 ]
+    dims: [ 3, 1008, 1008 ]
   }
 ]
 
@@ -33,7 +33,7 @@ version_policy: {
   }
 }
 
-# GPU Execution Instance
+# GPU Execution Instance for T4 GPU Node Pool
 instance_group [
   {
     count: 1
@@ -41,7 +41,9 @@ instance_group [
   }
 ]
 
-# Dynamic Batching (Optional - groups requests within delay budget)
+default_model_filename: "model.plan"
+
+# Dynamic Batching (Groups requests within delay budget)
 dynamic_batching {
   max_queue_delay_microseconds: 5000
 }

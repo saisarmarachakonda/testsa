@@ -49,7 +49,7 @@ class RfDetrLocationTagDetection:
         **kwargs
     ):
         self.triton_url = triton_url or os.getenv("TRITON_URL", "localhost:8001")
-        self.model_name = model_name or os.getenv("RFDETR_MODEL_NAME", "rfdetr")
+        self.model_name = model_name or os.getenv("RFDETR_MODEL_NAME", "tagdet_rt")
         self.model_version = model_version or os.getenv("RFDETR_MODEL_VERSION", "2")
         self.conf_threshold = float(os.getenv("RFDETR_CONF_THRESHOLD", str(conf_threshold)))
         self.filter_tag_only = filter_tag_only

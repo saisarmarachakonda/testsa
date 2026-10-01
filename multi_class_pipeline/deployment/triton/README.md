@@ -22,11 +22,11 @@ flowchart TD
 ---
 
 ### Step 1: Export `.pth` → ONNX & Inspect Input/Output Names/Shapes
-- Run `multi_class_pipeline/08_convert_rfdetr_to_onnx.ipynb` to export the trained `.pth` checkpoint to `rfdetr_model.onnx`.
+- Run `multi_class_pipeline/09_convert_rfdetr_to_onnx.ipynb` to export the trained `.pth` checkpoint to `rfdetr_model.onnx`.
 - Inspect graph signature with `onnxruntime`:
   - **Input**:
     - Name: `"images"`
-    - Shape: `[1, 3, 560, 560]` (dtype: `float32`)
+    - Shape: `[1, 3, 1008, 1008]` (or `[1, 3, 560, 560]`, dtype: `float32`)
   - **Outputs**:
     - Name: `"scores"` — Shape: `[1, 300, 3]` (dtype: `float32`)
     - Name: `"boxes"` — Shape: `[1, 300, 4]` (cx, cy, w, h normalized [0, 1])
@@ -34,17 +34,17 @@ flowchart TD
 ---
 
 ### Step 2: Convert ONNX → `model.plan` with `trtexec`
-Convert using `convert_trtexec.sh` inside an environment matching the Triton GPU node's architecture (e.g., Tesla V100/T4):
+Convert using `convert_trtexec.sh` inside an environment matching the Triton GPU node's architecture (e.g., Tesla T4 on AKS):
 ```bash
-./convert_trtexec.sh rfdetr_model.onnx model.plan 560 4
+./convert_trtexec.sh rfdetr_model.onnx model.plan 1008 4
 ```
 Ensure `config.pbtxt` is configured with matching tensor names and dims:
 ```protobuf
-name: "rfdetr"
+name: "tagdet_rt"
 platform: "tensorrt_plan"
 max_batch_size: 4
 input [
-  { name: "images", data_type: TYPE_FP32, dims: [ 3, 560, 560 ] }
+  { name: "images", data_type: TYPE_FP32, dims: [ 3, 1008, 1008 ] }
 ]
 output [
   { name: "scores", data_type: TYPE_FP32, dims: [ 300, 3 ] },
@@ -55,14 +55,15 @@ output [
 ---
 
 ### Step 3: Upload `model.plan` to Azure FileShare & Verify `is_model_ready()`
-The Triton model repository structure on your Azure File Share:
+The Triton model repository structure on your Azure File Share (`aks-iras-t4-floor-models`):
 ```
-models/rfdetr/
-├── config.pbtxt
-├── 1/
-│   └── model.plan   # Previous model version
-└── 2/
-    └── model.plan   # New version added here!
+aks-iras-t4-floor-models/
+└── tagdet_rt/
+    ├── config.pbtxt
+    ├── 1/
+    │   └── model.plan   # Previous model version
+    └── 2/
+        └── model.plan   # New version added here!
 ```
 Upload using the automated script:
 ```bash

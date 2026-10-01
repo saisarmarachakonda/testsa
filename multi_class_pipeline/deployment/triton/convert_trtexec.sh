@@ -3,12 +3,17 @@
 # Step 2: Convert ONNX to TensorRT Plan (model.plan)
 # Must be executed on an environment matching the Triton server's GPU architecture
 # and TensorRT version (e.g. inside the Triton container or GPU VM).
+#
+# Defaults match multi_class_train_rfdetr.ipynb (Resolution: 1008x1008)
+# Usage:
+#   ./convert_trtexec.sh [onnx_path] [output_plan] [resolution] [max_batch]
+#   ./convert_trtexec.sh rfdetr_model.onnx model.plan 1008 4
 # ==============================================================================
 set -euo pipefail
 
 ONNX_MODEL="${1:-rfdetr_model.onnx}"
 PLAN_OUTPUT="${2:-model.plan}"
-RESOLUTION="${3:-560}"
+RESOLUTION="${3:-1008}"
 MAX_BATCH="${4:-4}"
 
 echo "=============================================================================="
@@ -17,6 +22,8 @@ echo " • Input ONNX:       ${ONNX_MODEL}"
 echo " • Output Plan:      ${PLAN_OUTPUT}"
 echo " • Resolution:       ${RESOLUTION}x${RESOLUTION}"
 echo " • Max Batch Size:   ${MAX_BATCH}"
+echo " • Input Tensor:     images"
+echo " • Output Tensors:   scores [300, 3], boxes [300, 4]"
 echo "=============================================================================="
 
 if ! command -v trtexec &> /dev/null; then

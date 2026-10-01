@@ -20,7 +20,7 @@ logger = logging.getLogger("IRAS.LocationTagModule")
 USE_RFDETR_TAGDET = os.getenv("USE_RFDETR_TAGDET", "false").lower() in ("true", "1", "yes")
 
 # 2. Triton Model Name & Version
-RFDETR_MODEL_NAME = os.getenv("RFDETR_MODEL_NAME", "rfdetr")
+RFDETR_MODEL_NAME = os.getenv("RFDETR_MODEL_NAME", "tagdet_rt")
 RFDETR_MODEL_VERSION = os.getenv("RFDETR_MODEL_VERSION", "2")
 TRITON_URL = os.getenv("TRITON_URL", "localhost:8001")
 

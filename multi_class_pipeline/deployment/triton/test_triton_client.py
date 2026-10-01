@@ -31,8 +31,8 @@ from inference.iras.floor.detection import RfDetrLocationTagDetection
 def parse_args():
     parser = argparse.ArgumentParser(description="Test RF-DETR Triton Client via port-forward.")
     parser.add_argument("--triton-url", default="localhost:8001", help="Triton gRPC endpoint (default: localhost:8001)")
-    parser.add_argument("--model-name", default="rfdetr", help="Triton model name (default: rfdetr)")
-    parser.add_argument("--model-version", default="2", help="Model version (default: 2)")
+    parser.add_argument("--model-name", default=os.getenv("RFDETR_MODEL_NAME", "tagdet_rt"), help="Triton model name (default: tagdet_rt)")
+    parser.add_argument("--model-version", default=os.getenv("RFDETR_MODEL_VERSION", "2"), help="Model version (default: 2)")
     parser.add_argument("--image", default=None, help="Path to input test image")
     parser.add_argument("--conf", type=float, default=0.25, help="Confidence threshold")
     parser.add_argument("--output", default="triton_prediction_result.jpg", help="Output visualization path")
