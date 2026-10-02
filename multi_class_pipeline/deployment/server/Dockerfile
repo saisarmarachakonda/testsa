@@ -7,7 +7,7 @@ ENV DISABLE_MODEL_SOURCE_CHECK=True
 
 WORKDIR /app
 
-# Install system dependencies (curl for probes, libgomp1 for openmp, libgl1/libglib for OpenCV/Paddle)
+# Install system dependencies (curl for probes, libgomp1 for openmp, libgl1/libglib for OpenCV)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     libgomp1 \
@@ -19,15 +19,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Pre-download PaddleOCR English detection and recognition models at build time
-RUN python -c "import os; os.environ['FLAGS_use_mkldnn']='0'; from paddleocr import PaddleOCR; PaddleOCR(lang='en', use_gpu=False)"
-
 # Copy model and application code
 COPY rfdetr_model.onnx .
 COPY app.py .
 
 # Create non-root user
-RUN useradd -u 1000 appuser && chown -R appuser:appuser /app /root/.paddleocr 2>/dev/null || true
+RUN useradd -u 1000 appuser && chown -R appuser:appuser /app
 USER appuser
 
 EXPOSE 8000

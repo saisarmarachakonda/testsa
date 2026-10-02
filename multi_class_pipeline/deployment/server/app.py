@@ -1,5 +1,5 @@
 # ==============================================================================
-# RF-DETR ONNX Inference + PaddleOCR Microservice (FastAPI)
+# RF-DETR ONNX Runtime Microservice (FastAPI)
 # ==============================================================================
 import os
 import io
@@ -17,9 +17,7 @@ MODEL_PATH = os.getenv("MODEL_PATH", "rfdetr_model.onnx")
 RESOLUTION = int(os.getenv("RESOLUTION", "1008"))
 CLASSES_ENV = os.getenv("CLASSES", '["blue_aisle", "blue_bay", "location_tag"]')
 
-# Port-Forwarded Enterprise Endpoints
 DETECTION_SERVICE_URL = os.getenv("DETECTION_SERVICE_URL", "http://127.0.0.1:8001")
-OCR_SERVICE_URL = os.getenv("OCR_SERVICE_URL", "http://127.0.0.1:8002")
 try:
     import json
     CLASSES = json.loads(CLASSES_ENV)
@@ -27,8 +25,8 @@ except Exception:
     CLASSES = ["blue_aisle", "blue_bay", "location_tag"]
 
 app = FastAPI(
-    title="RF-DETR + PaddleOCR Inference API",
-    description="Private ONNX Runtime Detection and PaddleOCR Text Recognition on AKS",
+    title="RF-DETR Multi-Class Object Detection API",
+    description="Private ONNX Runtime Detection on AKS",
     version="1.1.0"
 )
 
@@ -44,11 +42,10 @@ app.add_middleware(
 session = None
 input_name = None
 output_names = []
-ocr_engine = None
 
 @app.on_event("startup")
 def startup_engines():
-    global session, input_name, output_names, ocr_engine
+    global session, input_name, output_names
 
     # 1. Initialize RF-DETR ONNX Session
     if not os.path.exists(MODEL_PATH):
@@ -63,29 +60,6 @@ def startup_engines():
         output_names = [o.name for o in session.get_outputs()]
         print(f"[STARTUP] Loaded RF-DETR ONNX model '{MODEL_PATH}' using {session.get_providers()[0]}")
 
-    # 2. Initialize PaddleOCR Engine
-    try:
-        os.environ["FLAGS_use_mkldnn"] = "0"
-        os.environ["PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT"] = "0"
-        import logging
-        logging.getLogger("ppocr").setLevel(logging.WARNING)
-        from paddleocr import PaddleOCR
-        use_gpu = (ort.get_device() == "GPU")
-        try:
-            ocr_engine = PaddleOCR(use_textline_orientation=True, lang="en", enable_mkldnn=False, use_gpu=use_gpu)
-        except TypeError:
-            try:
-                ocr_engine = PaddleOCR(use_textline_orientation=True, lang="en", enable_mkldnn=False)
-            except TypeError:
-                try:
-                    ocr_engine = PaddleOCR(use_angle_cls=True, lang="en", use_gpu=use_gpu)
-                except TypeError:
-                    ocr_engine = PaddleOCR(use_angle_cls=True, lang="en")
-        print(f"[STARTUP] PaddleOCR initialized successfully (use_gpu={use_gpu}).")
-    except Exception as e:
-        print(f"[STARTUP NOTICE] PaddleOCR could not be initialized: {e}")
-        ocr_engine = None
-
 # Response Schemas
 class Detection(BaseModel):
     class_name: str
@@ -93,55 +67,40 @@ class Detection(BaseModel):
     confidence: float
     box_xyxy: List[float] = Field(..., description="[x1, y1, x2, y2] in original image pixel coordinates")
     fused_count: Optional[int] = Field(1, description="Number of candidate queries fused via weighted box averaging")
-    ocr_text: Optional[str] = Field(None, description="Recognized text inside bounding box using PaddleOCR")
-    ocr_confidence: Optional[float] = Field(None, description="PaddleOCR recognition confidence score")
 
 class PredictionResponse(BaseModel):
     success: bool
     image_width: int
     image_height: int
     inference_time_ms: float
-    ocr_time_ms: Optional[float] = None
     detections_count: int
     detections: List[Detection]
-
-class OCRResult(BaseModel):
-    text: str
-    confidence: float
-    box: Optional[List[List[float]]] = None
-
-class DirectOCRResponse(BaseModel):
-    success: bool
-    ocr_time_ms: float
-    results_count: int
-    results: List[OCRResult]
 
 @app.get("/healthz", status_code=status.HTTP_200_OK, tags=["Monitoring"])
 def health_check():
     """Kubernetes liveness and readiness probe endpoint."""
-    if session is None and ocr_engine is None:
-        raise HTTPException(status_code=503, detail="Engines not ready")
+    if session is None:
+        raise HTTPException(status_code=503, detail="RF-DETR ONNX session not ready")
     return {
         "status": "healthy",
         "rfdetr_loaded": session is not None,
-        "paddleocr_loaded": ocr_engine is not None,
         "provider": session.get_providers()[0] if session else "none"
     }
 
 @app.get("/metadata", tags=["Metadata"])
 def get_metadata():
-    """Returns model architecture, input resolution, classes, and OCR capabilities."""
+    """Returns model architecture, input resolution, and classes."""
     return {
         "model_path": MODEL_PATH,
         "resolution": RESOLUTION,
         "classes": CLASSES,
         "num_classes": len(CLASSES),
         "rfdetr_loaded": session is not None,
-        "paddleocr_loaded": ocr_engine is not None,
         "execution_provider": session.get_providers()[0] if session else "uninitialized"
     }
 
 def preprocess_image(pil_img: Image.Image) -> np.ndarray:
+    """Preprocess PIL image for RF-DETR ONNX inference."""
     resized = pil_img.resize((RESOLUTION, RESOLUTION), Image.BILINEAR)
     img_np = np.array(resized, dtype=np.float32) / 255.0
     
@@ -151,66 +110,6 @@ def preprocess_image(pil_img: Image.Image) -> np.ndarray:
     img_norm = (img_np - mean) / std
     
     return np.transpose(img_norm, (2, 0, 1))[np.newaxis, ...]
-
-def run_paddle_ocr_on_crop(crop_img: Image.Image) -> Tuple[Optional[str], Optional[float]]:
-    if ocr_engine is None:
-        return None, None
-    try:
-        crop_np = np.array(crop_img.convert("RGB"))
-        if crop_np.shape[0] < 4 or crop_np.shape[1] < 4:
-            return None, None
-            
-        # Use predict instead of ocr for modern PaddleOCR pipelines
-        ocr_res = None
-        if hasattr(ocr_engine, "predict"):
-            try:
-                ocr_res = ocr_engine.predict(crop_np)
-            except Exception:
-                ocr_res = None
-        if ocr_res is None and hasattr(ocr_engine, "ocr"):
-            try:
-                ocr_res = ocr_engine.ocr(crop_np, cls=True)
-            except TypeError:
-                ocr_res = ocr_engine.ocr(crop_np)
-
-        if not ocr_res:
-            return None, None
-            
-        texts = []
-        confs = []
-        for item in ocr_res:
-            if isinstance(item, dict):
-                for t, s in zip(item.get("rec_texts", []), item.get("rec_scores", [])):
-                    if t and str(t).strip():
-                        texts.append(str(t).strip())
-                        confs.append(float(s))
-            elif hasattr(item, "json") and isinstance(item.json, dict):
-                for t, s in zip(item.json.get("rec_texts", []), item.json.get("rec_scores", [])):
-                    if t and str(t).strip():
-                        texts.append(str(t).strip())
-                        confs.append(float(s))
-            elif hasattr(item, "rec_texts"):
-                for t, s in zip(getattr(item, "rec_texts", []), getattr(item, "rec_scores", [])):
-                    if t and str(t).strip():
-                        texts.append(str(t).strip())
-                        confs.append(float(s))
-            elif isinstance(item, list):
-                for line in item:
-                    if isinstance(line, (list, tuple)) and len(line) >= 2:
-                        txt_info = line[1]
-                        if isinstance(txt_info, (list, tuple)) and len(txt_info) >= 2:
-                            t = str(txt_info[0]).strip()
-                            s = float(txt_info[1])
-                            if t:
-                                texts.append(t)
-                                confs.append(s)
-                
-        if texts:
-            return " ".join(texts), round(float(np.mean(confs)), 4)
-        return None, None
-    except Exception as e:
-        print(f"[OCR WARNING] Failed to run PaddleOCR on patch: {e}")
-        return None, None
 
 def recalibrate_and_average_boxes(
     boxes: List[List[float]],
@@ -228,7 +127,7 @@ def recalibrate_and_average_boxes(
     Recalibrate detections via:
     1. Boundary-Box Shrinkage: Contracts loose query boundaries towards center by shrink_factor
        (e.g., 0.96 shrinks width and height by 4%), eliminating background margin jitter
-       and tightening crops for downstream PaddleOCR.
+       and tightening crops.
     2. Bounding-Box Averaging: Clusters overlapping queries of the same class (IoU >= fusion_iou)
        and performs confidence-weighted coordinate averaging, suppressing duplicate false alarms.
     """
@@ -246,28 +145,29 @@ def recalibrate_and_average_boxes(
             y1 = max(0.0, cy - h / 2.0)
             x2 = min(float(max_w), cx + w / 2.0)
             y2 = min(float(max_h), cy + h / 2.0)
-            shrunk_b = [round(x1, 1), round(y1, 1), round(x2, 1), round(y2, 1)]
         else:
-            shrunk_b = [round(b[0], 1), round(b[1], 1), round(b[2], 1), round(b[3], 1)]
+            x1, y1, x2, y2 = b[0], b[1], b[2], b[3]
             
-        cname = class_names[i] if class_names else str(class_ids[i])
+        cname = class_names[i] if class_names and i < len(class_names) else f"class_{class_ids[i]}"
         shrunk.append({
-            "box": shrunk_b,
-            "score": float(scores[i]),
-            "class_id": int(class_ids[i]),
-            "class_name": cname
+            "box": [x1, y1, x2, y2],
+            "score": scores[i],
+            "class_id": class_ids[i],
+            "class_name": cname,
+            "fused_count": 1
         })
         
-    if not enable_averaging or len(shrunk) <= 1:
+    if not enable_averaging:
         return shrunk
         
-    # Bounding-box weighted averaging (WBF)
-    fused = []
-    distinct_classes = set(p["class_id"] for p in shrunk)
-    for cid in distinct_classes:
-        c_preds = [p for p in shrunk if p["class_id"] == cid]
-        c_preds.sort(key=lambda x: x["score"], reverse=True)
+    # Group by class_id and perform weighted box fusion averaging
+    by_class = {}
+    for item in shrunk:
+        by_class.setdefault(item["class_id"], []).append(item)
         
+    fused = []
+    for cid, c_preds in by_class.items():
+        c_preds.sort(key=lambda x: x["score"], reverse=True)
         clusters = []
         for p in c_preds:
             matched = False
@@ -311,16 +211,15 @@ def recalibrate_and_average_boxes(
 async def predict(
     file: UploadFile = File(..., description="JPEG/PNG image file"),
     conf_threshold: float = Query(0.25, ge=0.0, le=1.0, description="Minimum detection confidence score"),
-    run_ocr: bool = Query(True, description="Run PaddleOCR on detected tag bounding boxes"),
     enable_box_averaging: bool = Query(True, description="Fuse overlapping candidate queries with weighted box averaging"),
     enable_shrinkage: bool = Query(True, description="Recalibrate loose borders with boundary-box shrinkage"),
     shrink_factor: float = Query(0.96, ge=0.80, le=1.0, description="Boundary shrinkage factor (0.96 = 4% border contraction)"),
     fusion_iou: float = Query(0.50, ge=0.10, le=0.90, description="IoU threshold for box averaging clustering")
 ):
     """
-    Two-Stage Detection & Recognition Pipeline:
+    Object Detection Inference Pipeline:
     1. RF-DETR detects objects / location tags.
-    2. PaddleOCR extracts text inside each detected bounding box.
+    2. Recalibrate detections with optional boundary shrinkage & weighted box averaging.
     """
     if session is None:
         raise HTTPException(status_code=503, detail="RF-DETR model is not initialized")
@@ -334,30 +233,36 @@ async def predict(
         raise HTTPException(status_code=400, detail=f"Failed to decode image: {e}")
         
     t_start = time.perf_counter()
-    raw_outs = session.run(output_names, {input_name: tensor})
+    ort_inputs = {input_name: tensor}
+    outputs = session.run(output_names, ort_inputs)
     inf_time_ms = round((time.perf_counter() - t_start) * 1000, 2)
     
-    out_scores = raw_outs[0][0]  # (queries, num_classes)
-    out_boxes  = raw_outs[1][0]  # (queries, 4) in cx, cy, w, h
+    # Parse outputs
+    pred_boxes, pred_logits = outputs[0], outputs[1]
     
-    if out_scores.min() < 0.0 or out_scores.max() > 1.0:
-        out_scores = 1.0 / (1.0 + np.exp(-out_scores))
-        
-    max_scores = np.max(out_scores, axis=-1)
-    class_indices = np.argmax(out_scores, axis=-1)
+    if hasattr(pred_logits, "ndim") and pred_logits.ndim == 3:
+        scores_arr = 1.0 / (1.0 + np.exp(-pred_logits[0]))
+        boxes_arr = pred_boxes[0]
+    else:
+        scores_arr = pred_logits
+        boxes_arr = pred_boxes
+
+    labels_arr = np.argmax(scores_arr, axis=-1)
+    max_scores = np.max(scores_arr, axis=-1)
+
+    # Filter by confidence threshold
+    valid_mask = max_scores >= conf_threshold
+    f_boxes = boxes_arr[valid_mask]
+    f_scores = max_scores[valid_mask]
+    f_labels = labels_arr[valid_mask]
+
+    # Convert cxcywh to xyxy in original pixel coordinates
+    raw_boxes_xyxy = []
+    raw_scores_list = []
+    raw_class_ids = []
+    raw_class_names = []
     
-    keep_mask = max_scores >= conf_threshold
-    filtered_scores = max_scores[keep_mask]
-    filtered_classes = class_indices[keep_mask]
-    filtered_boxes = out_boxes[keep_mask]
-    
-    # Extract raw pixel coordinates
-    raw_boxes_xyxy: List[List[float]] = []
-    raw_scores_list: List[float] = []
-    raw_class_ids: List[int] = []
-    raw_class_names: List[str] = []
-    
-    for sc, cid, (cx, cy, w, h) in zip(filtered_scores, filtered_classes, filtered_boxes):
+    for (cx, cy, w, h), sc, cid in zip(f_boxes, f_scores, f_labels):
         x1 = float(max(0.0, (cx - w / 2.0) * orig_w))
         y1 = float(max(0.0, (cy - h / 2.0) * orig_h))
         x2 = float(min(float(orig_w), (cx + w / 2.0) * orig_w))
@@ -384,116 +289,38 @@ async def predict(
     )
 
     detections: List[Detection] = []
-    t_ocr_start = time.perf_counter()
-    
+        
     for item in recalibrated:
         sc = item["score"]
         cid = item["class_id"]
         c_name = item["class_name"]
         x1, y1, x2, y2 = item["box"]
-        
-        # Run PaddleOCR on tightly recalibrated crop
-        ocr_text, ocr_conf = None, None
-        if run_ocr and ocr_engine is not None and (x2 - x1 >= 5) and (y2 - y1 >= 5):
-            crop = pil_img.crop((int(x1), int(y1), int(x2), int(y2)))
-            ocr_text, ocr_conf = run_paddle_ocr_on_crop(crop)
             
         detections.append(Detection(
             class_name=c_name,
             class_id=int(cid),
             confidence=round(float(sc), 4),
             box_xyxy=[round(x1, 1), round(y1, 1), round(x2, 1), round(y2, 1)],
-            fused_count=item.get("fused_count", 1),
-            ocr_text=ocr_text,
-            ocr_confidence=ocr_conf
+            fused_count=item.get("fused_count", 1)
         ))
-        
-    ocr_time_ms = round((time.perf_counter() - t_ocr_start) * 1000, 2) if run_ocr else None
     
     return PredictionResponse(
         success=True,
         image_width=orig_w,
         image_height=orig_h,
         inference_time_ms=inf_time_ms,
-        ocr_time_ms=ocr_time_ms,
         detections_count=len(detections),
         detections=detections
     )
-
-@app.post("/ocr", response_model=DirectOCRResponse, tags=["Inference"])
-async def direct_ocr(
-    file: UploadFile = File(..., description="JPEG/PNG image to run PaddleOCR on directly")
-):
-    """Runs PaddleOCR directly on the full image."""
-    if ocr_engine is None:
-        raise HTTPException(status_code=503, detail="PaddleOCR engine is not initialized")
-        
-    try:
-        contents = await file.read()
-        pil_img = Image.open(io.BytesIO(contents)).convert("RGB")
-        img_np = np.array(pil_img)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to decode image: {e}")
-        
-    t_start = time.perf_counter()
-    ocr_res = None
-    if hasattr(ocr_engine, "predict"):
-        try:
-            ocr_res = ocr_engine.predict(img_np)
-        except Exception:
-            ocr_res = None
-    if ocr_res is None and hasattr(ocr_engine, "ocr"):
-        try:
-            ocr_res = ocr_engine.ocr(img_np, cls=True)
-        except TypeError:
-            ocr_res = ocr_engine.ocr(img_np)
-            
-    ocr_time_ms = round((time.perf_counter() - t_start) * 1000, 2)
-    
-    results = []
-    if ocr_res:
-        for item in ocr_res:
-            if isinstance(item, dict):
-                r_boxes = item.get("rec_polys", item.get("dt_polys", []))
-                r_texts = item.get("rec_texts", [])
-                r_scores = item.get("rec_scores", [])
-                for i, txt in enumerate(r_texts):
-                    box = [[float(p[0]), float(p[1])] for p in r_boxes[i]] if i < len(r_boxes) else []
-                    score = round(float(r_scores[i]), 4) if i < len(r_scores) else 1.0
-                    results.append(OCRResult(text=txt, confidence=score, box=box))
-            elif hasattr(item, "json") and isinstance(item.json, dict):
-                r_boxes = item.json.get("rec_polys", item.json.get("dt_polys", []))
-                r_texts = item.json.get("rec_texts", [])
-                r_scores = item.json.get("rec_scores", [])
-                for i, txt in enumerate(r_texts):
-                    box = [[float(p[0]), float(p[1])] for p in r_boxes[i]] if i < len(r_boxes) else []
-                    score = round(float(r_scores[i]), 4) if i < len(r_scores) else 1.0
-                    results.append(OCRResult(text=txt, confidence=score, box=box))
-            elif isinstance(item, list):
-                for line in item:
-                    if isinstance(line, (list, tuple)) and len(line) >= 2:
-                        box_coords = [[float(p[0]), float(p[1])] for p in line[0]] if isinstance(line[0], (list, tuple)) else []
-                        txt = line[1][0]
-                        score = round(float(line[1][1]), 4)
-                        results.append(OCRResult(text=txt, confidence=score, box=box_coords))
-            
-    return DirectOCRResponse(
-        success=True,
-        ocr_time_ms=ocr_time_ms,
-        results_count=len(results),
-        results=results
-    )
-
 
 if __name__ == "__main__":
     import uvicorn
     host = os.getenv("HOST", "0.0.0.0")
     port = int(os.getenv("PORT", "8000"))
     print("=" * 80)
-    print(" Starting RF-DETR + PaddleOCR Gateway Server")
+    print(" Starting RF-DETR Detection Gateway Server")
     print(f" • Local API Endpoint:   http://{host}:{port}")
     print(f" • Swagger UI Docs:      http://{host}:{port}/docs")
     print(f" • Detection Service:    {DETECTION_SERVICE_URL}")
-    print(f" • OCR Service:          {OCR_SERVICE_URL}")
     print("=" * 80)
-    uvicorn.run("app:app", host=host, port=port, reload=False)
+    uvicorn.run("app:app", host=host, port=port, reload=False, workers=1)

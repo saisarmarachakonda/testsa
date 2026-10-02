@@ -1,25 +1,25 @@
-# RF-DETR + PaddleOCR Private Deployment on Azure Kubernetes Service (AKS)
+# RF-DETR Private Deployment on Azure Kubernetes Service (AKS)
 
 This directory contains the complete toolkit to:
 1. Convert your trained **RF-DETR** model to optimized **ONNX** format.
-2. Deploy a **two-stage Object Detection & OCR microservice** (**RF-DETR + PaddleOCR**) on **Azure Kubernetes Service (AKS)** behind an **Internal Load Balancer** (**Zero Public IP Exposure**).
-3. Connect securely and run end-to-end tag detection and text recognition via **`kubectl port-forward`**.
+2. Deploy a high-throughput **Object Detection microservice** (**RF-DETR**) on **Azure Kubernetes Service (AKS)** behind an **Internal Load Balancer** (**Zero Public IP Exposure**).
+3. Connect securely and run end-to-end tag detection via **`kubectl port-forward`**.
 
 ---
 
-## Architecture: Detection + Text Recognition Pipeline
+## Architecture: Multi-Class Detection Pipeline
 
 ```
 [ Input Image ]
        │
-       ▼ (Stage 1: Detection)
-[ RF-DETR ONNX ] ──> Detects tags & bounding boxes (e.g. location_tag, blue_aisle, blue_bay)
+       ▼ (Detection)
+[ RF-DETR ONNX / TensorRT ] ──> Detects tags & bounding boxes (blue_aisle, blue_bay, location_tag)
        │
-       ▼ (Stage 2: Text Recognition)
-[ PaddleOCR ] ─────> Crops detected bounding boxes & extracts alphanumeric text (e.g. "LOC-A-12-04")
+       ▼ (Recalibration & Fusion)
+[ Post-Processing ] ─────────> Weighted Box Averaging & Boundary Shrinkage
        │
        ▼
-[ Combined Response ] ──> JSON with bounding box coordinates, class labels & OCR text
+[ Combined Response ] ───────> JSON with bounding box coordinates, class labels & confidence scores
 ```
 
 ---
@@ -31,12 +31,12 @@ deployment/
 ├── convert_rfdetr_to_onnx.ipynb    # Jupyter Notebook to convert & benchmark ONNX model
 ├── deploy.sh                        # Bash script for automated Azure ACR + AKS deployment
 ├── deploy.py                        # Cross-platform Python deployment automation script
-├── port_forward.sh                  # Secure port-forwarding tunnel script (port 8000 -> 80)
-├── test_client.py                   # Python CLI client to test inference & OCR via port-forwarding
+├── port_forward.sh                  # Secure port-forwarding tunnel script (port 8001:8001)
+├── test_client.py                   # Python CLI client to test inference via port-forwarding
 ├── server/
-│   ├── app.py                      # Production FastAPI service (RF-DETR ONNX + PaddleOCR)
-│   ├── Dockerfile                  # Container definition with pre-downloaded PaddleOCR models
-│   └── requirements.txt            # Runtime dependencies (FastAPI, ONNX Runtime, PaddleOCR, etc.)
+│   ├── app.py                      # Production FastAPI service (RF-DETR ONNX)
+│   ├── Dockerfile                  # Container definition with ONNX Runtime
+│   └── requirements.txt            # Runtime dependencies (FastAPI, ONNX Runtime, etc.)
 ├── k8s/
 │   ├── deployment.yaml             # Kubernetes Deployment template with resource limits & probes
 │   ├── service.yaml                # Internal LoadBalancer Service (no public IP)
@@ -72,7 +72,7 @@ python deploy.py
 **What this script does:**
 1. Verifies/performs `az login`.
 2. Creates an Azure Resource Group (`rg-rfdetr-inference`) and Azure Container Registry (`acrrfdetr<id>`).
-3. Executes `az acr build` to package `server/` into a Docker image directly in Azure (no local Docker needed). PaddleOCR models are cached into the image layer during build time.
+3. Executes `az acr build` to package `server/` into a Docker image directly in Azure (no local Docker needed).
 4. Provisions an AKS cluster (`aks-rfdetr-cluster`) with `--attach-acr` enabled.
 5. Deploys the rendered Kubernetes manifests.
 6. The service is created with `service.beta.kubernetes.io/azure-load-balancer-internal: "true"`, assigning a **private VNet IP** and ensuring **ZERO public IP exposure**.
@@ -97,15 +97,11 @@ kubectl config set-context --current --namespace="$K8S_NAMESPACE"
 # 2. Inspect Running Pods
 kubectl get pods -n "$K8S_NAMESPACE"
 
-# 3. Port Forward TensorRT Pods
-# Terminal 1 (OCR Microservice):
-kubectl port-forward <OCR_POD_NAME> 8002:8001 -n "$K8S_NAMESPACE"
-
-# Terminal 2 (Detection Microservice):
+# 3. Port Forward Detection Pod
 kubectl port-forward <DETECTION_POD_NAME> 8001:8001 -n "$K8S_NAMESPACE"
 ```
 
-Or execute the all-in-one script which auto-discovers pod IDs and manages both background tunnels:
+Or execute the all-in-one script which auto-discovers pod IDs and manages background tunnels:
 ```bash
 ./port_forward.sh
 ```
@@ -116,7 +112,6 @@ Or execute the all-in-one script which auto-discovers pod IDs and manages both b
 
 On a new terminal:
 ```bash
-# On a new terminal:
 cd multi_class_pipeline/deployment
 python3 app.py
 ```
@@ -124,14 +119,12 @@ python3 app.py
 The gateway server:
 - Runs locally on **port 8000** (`http://127.0.0.1:8000`)
 - Routes detection queries to **`http://127.0.0.1:8001`** (TensorRT V100 Detection Pod)
-- Routes OCR queries to **`http://127.0.0.1:8002`** (TensorRT V100 OCR Pod)
-- Performs **Weighted Box Fusion (Averaging)** and **Boundary Box Shrinkage (4% insetting)** on crops before feeding to PaddleOCR.
+- Performs **Weighted Box Fusion (Averaging)** and **Boundary Box Shrinkage (4% insetting)** to tighten query boundaries.
 
 Interactive endpoints:
 - **Swagger Docs**: `http://127.0.0.1:8000/docs`
 - **Health Check**: `http://127.0.0.1:8000/healthz`
-- **Predict (Detection + OCR)**: `POST http://127.0.0.1:8000/predict?run_ocr=true`
-- **Direct OCR**: `POST http://127.0.0.1:8000/ocr`
+- **Predict**: `POST http://127.0.0.1:8000/predict`
 
 ---
 
@@ -139,19 +132,15 @@ Interactive endpoints:
 In another terminal, run:
 
 ```bash
-# Test with default image / synthetic image (runs Detection + PaddleOCR)
+# Test with default image / synthetic image (runs Detection)
 python test_client.py
 
 # Test with a specific image
 python test_client.py --image path/to/sample.jpg --conf 0.20
-
-# Test detection only (disable OCR)
-python test_client.py --image path/to/sample.jpg --no-ocr
 ```
 
 The client will:
-- Check `/healthz` and verify both RF-DETR and PaddleOCR are active.
+- Check `/healthz` and verify RF-DETR is active.
 - Send the image to `POST /predict`.
-- Print detections, OCR recognized strings (e.g. `LOC-A-12-04`), confidence scores, and latency.
-- Save a visualization image with bounding boxes and recognized text labels to `prediction_result.jpg`.
-
+- Print detections, confidence scores, and latency.
+- Save a visualization image with bounding boxes and labels to `prediction_result.jpg`.
