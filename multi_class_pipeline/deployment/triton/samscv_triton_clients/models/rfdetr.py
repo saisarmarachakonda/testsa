@@ -86,6 +86,8 @@ class RFDetrTritonClient(TritonClient):
         pixel_coordinates: bool = True,
         shrink_factor: float = 0.96,               # 4% boundary shrinkage
         enable_shrinkage: bool = True,
+        filter_edge_crops: bool = True,            # Automatically drop detections touching frame borders
+        edge_crop_margin: float = 0.005,           # Border margin threshold (0.5% of frame)
         **kwargs
     ):
         super().__init__(url=url, model_name=model_name, model_version=model_version, **kwargs)
@@ -101,6 +103,8 @@ class RFDetrTritonClient(TritonClient):
         self.pixel_coordinates = pixel_coordinates
         self.shrink_factor = shrink_factor
         self.enable_shrinkage = enable_shrinkage
+        self.filter_edge_crops = filter_edge_crops
+        self.edge_crop_margin = edge_crop_margin
 
     def preprocess(self, image: Union[Image.Image, np.ndarray]) -> Tuple[np.ndarray, int, int]:
         """
@@ -217,6 +221,12 @@ class RFDetrTritonClient(TritonClient):
             y1 = max(0.0, float(cy - h / 2.0))
             x2 = min(1.0, float(cx + w / 2.0))
             y2 = min(1.0, float(cy + h / 2.0))
+
+            # Edge-Cropped Guard: Automatically drop boxes clipped by or touching the camera frame borders
+            if self.filter_edge_crops:
+                is_touching_border = (x1 <= self.edge_crop_margin) or                                      (y1 <= self.edge_crop_margin) or                                      (x2 >= (1.0 - self.edge_crop_margin)) or                                      (y2 >= (1.0 - self.edge_crop_margin))
+                if is_touching_border:
+                    continue
 
             # Boundary-Box Shrinkage (contracts box by 4% to suppress background jitter)
             if self.enable_shrinkage and self.shrink_factor < 1.0:

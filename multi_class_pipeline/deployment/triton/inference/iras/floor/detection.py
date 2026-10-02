@@ -46,6 +46,8 @@ class RfDetrLocationTagDetection:
         model_version: Optional[str] = None,
         conf_threshold: float = 0.40,
         filter_tag_only: bool = False,
+        filter_edge_crops: bool = True,
+        edge_crop_margin: float = 0.005,
         **kwargs
     ):
         self.triton_url = triton_url or os.getenv("TRITON_URL", "localhost:8001")
@@ -61,6 +63,8 @@ class RfDetrLocationTagDetection:
             conf_threshold=self.conf_threshold,
             bbox_format="ymin_xmin_ymax_xmax",
             pixel_coordinates=True,
+            filter_edge_crops=filter_edge_crops,
+            edge_crop_margin=edge_crop_margin,
             **kwargs
         )
 
