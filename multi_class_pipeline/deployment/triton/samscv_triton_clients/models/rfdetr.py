@@ -62,7 +62,7 @@ class RFDetrTritonClient(TritonClient):
     """
 
     # Categories discovered in multi_class_train_rfdetr.ipynb (contiguously 0-indexed)
-    DEFAULT_CLASSES = ["Blue_aisle", "blue_bay", "location_tag"]
+    DEFAULT_CLASSES = ["blue_aisle", "blue_bay", "location_tag"]
     DEFAULT_MODEL_NAME = os.getenv("RFDETR_MODEL_NAME", "tagdet_rt")
     DEFAULT_INPUT_HEIGHT = int(os.getenv("RFDETR_INPUT_HEIGHT", "640"))
     DEFAULT_INPUT_WIDTH = int(os.getenv("RFDETR_INPUT_WIDTH", "480"))
