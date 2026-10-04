@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rfdetr-inference-deployment
+  labels:
+    app: rfdetr-inference
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: rfdetr-inference
+  template:
+    metadata:
+      labels:
+        app: rfdetr-inference
+    spec:
+      containers:
+      - name: rfdetr-inference
+        image: {{ACR_LOGIN_SERVER}}/rfdetr-inference:{{IMAGE_TAG}}
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8000
+          name: http
+        resources:
+          requests:
+            cpu: "1000m"
+            memory: "3Gi"
+          limits:
+            cpu: "3000m"
+            memory: "6Gi"
+        env:
+        - name: MODEL_PATH
+          value: "rfdetr_model.onnx"
+        - name: RESOLUTION
+          value: "1008"
+        - name: ORT_NUM_THREADS
+          value: "2"
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8000
+          initialDelaySeconds: 25
+          periodSeconds: 15
+          timeoutSeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8000
+          initialDelaySeconds: 20
+          periodSeconds: 10
+          timeoutSeconds: 5
