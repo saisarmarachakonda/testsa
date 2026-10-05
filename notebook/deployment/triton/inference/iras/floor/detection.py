@@ -44,7 +44,7 @@ class RfDetrLocationTagDetection:
         triton_url: Optional[str] = None,
         model_name: Optional[str] = None,
         model_version: Optional[str] = None,
-        conf_threshold: float = 0.71,
+        conf_threshold: float = 0.75,
         filter_tag_only: bool = False,
         filter_edge_crops: bool = True,
         edge_crop_margin: float = 0.005,

@@ -77,7 +77,7 @@ class RFDetrTritonClient(TritonClient):
         classes: Optional[List[str]] = None,
         input_height: int = DEFAULT_INPUT_HEIGHT,
         input_width: int = DEFAULT_INPUT_WIDTH,
-        conf_threshold: float = 0.71,
+        conf_threshold: float = 0.75,
         input_name: str = "images",
         output_name: str = "output",
         scores_output_name: Optional[str] = None,
