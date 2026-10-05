@@ -222,6 +222,93 @@ def apply_weighted_box_fusion(
     return np.array(fused_boxes, dtype=np.float32), np.array(fused_scores, dtype=np.float32), np.array(fused_labels, dtype=int)
 
 
+def merge_adjacent_placard_fragments(
+    boxes: np.ndarray,
+    scores: np.ndarray,
+    labels: np.ndarray,
+    y_overlap_thresh: float = 0.65,
+    max_horizontal_gap_ratio: float = 0.45
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Merges split alphanumeric fragments (e.g., 'D' and '17' on a 'D17' placard)
+    into a single full placard bounding box, preventing near-miss IoU dropouts.
+    """
+    if len(boxes) <= 1:
+        return boxes, scores, labels
+
+    fused_boxes, fused_scores, fused_labels = [], [], []
+    for lbl in np.unique(labels):
+        idx = np.where(labels == lbl)[0]
+        lbl_boxes = boxes[idx]
+        lbl_scores = scores[idx]
+
+        used = np.zeros(len(lbl_boxes), dtype=bool)
+        for i in range(len(lbl_boxes)):
+            if used[i]:
+                continue
+            group = [i]
+            bA = lbl_boxes[i]
+            hA = bA[3] - bA[1]
+
+            for j in range(i + 1, len(lbl_boxes)):
+                if used[j]:
+                    continue
+                bB = lbl_boxes[j]
+                hB = bB[3] - bB[1]
+
+                # 1. Vertical alignment check (share the same horizontal beam line)
+                y_inter = max(0.0, min(bA[3], bB[3]) - max(bA[1], bB[1]))
+                min_h = min(hA, hB)
+                if min_h > 0 and (y_inter / min_h) >= y_overlap_thresh:
+                    # 2. Horizontal proximity check (adjacent characters on the same placard)
+                    x_gap = max(0.0, max(bA[0], bB[0]) - min(bA[2], bB[2]))
+                    if x_gap <= max_horizontal_gap_ratio * min_h:
+                        group.append(j)
+                        used[j] = True
+
+            used[i] = True
+            grp_boxes = lbl_boxes[group]
+            grp_scores = lbl_scores[group]
+
+            # Merge to the outermost extents encompassing the full placard
+            union_box = [
+                float(np.min(grp_boxes[:, 0])),
+                float(np.min(grp_boxes[:, 1])),
+                float(np.max(grp_boxes[:, 2])),
+                float(np.max(grp_boxes[:, 3]))
+            ]
+            fused_boxes.append(union_box)
+            fused_scores.append(float(np.max(grp_scores)))
+            fused_labels.append(lbl)
+
+    return np.array(fused_boxes, dtype=np.float32), np.array(fused_scores, dtype=np.float32), np.array(fused_labels, dtype=int)
+
+
+def recalibrate_placard_margins(
+    box_xyxy: Union[List[float], np.ndarray],
+    expand_x_ratio: float = 0.10,
+    expand_y_ratio: float = 0.05
+) -> List[float]:
+    """
+    Expands text-only sub-crops ('C1') out to the metal placard boundary.
+    """
+    x1, y1, x2, y2 = box_xyxy
+    w = x2 - x1
+    h = y2 - y1
+    cx = x1 + w / 2.0
+    cy = y1 + h / 2.0
+
+    new_w = w * (1.0 + expand_x_ratio)
+    new_h = h * (1.0 + expand_y_ratio)
+
+    return [
+        max(0.0, float(cx - new_w / 2.0)),
+        max(0.0, float(cy - new_h / 2.0)),
+        min(1.0, float(cx + new_w / 2.0)),
+        min(1.0, float(cy + new_h / 2.0))
+    ]
+
+
 def postprocess_output(
     raw_output: np.ndarray,
     orig_w: int,
@@ -236,10 +323,12 @@ def postprocess_output(
     shrink_factor: float = 0.96,
     enable_wbf: bool = True,
     wbf_iou_thresh: float = 0.55,
+    enable_fragment_merge: bool = True,
+    enable_margin_recalibration: bool = True,
     min_area_ratio: float = 0.0001,
     max_area_ratio: float = 0.75,
-    min_aspect_ratio: float = 0.15,
-    max_aspect_ratio: float = 12.0
+    min_aspect_ratio: float = 0.35,
+    max_aspect_ratio: float = 8.0
 ) -> List[Dict[str, Any]]:
     """
     Production Post-Processing conforming to tagdet_rt unified output [1, 18900, 7]
@@ -250,13 +339,17 @@ def postprocess_output(
     3. Confidence thresholding: isolates high-confidence detections (default >= 0.75).
     4. Hallucination Suppression:
        - Area ratio guard: filters out microscopic background noise (<0.01% frame) and massive full-frame boxes (>75% frame).
-       - Aspect ratio guard: eliminates abnormal slivers (w/h < 0.15 or w/h > 12.0) characteristic of shelf-seam hallucinations.
+       - Aspect ratio guard: eliminates abnormal slivers (w/h < 0.35 or w/h > 8.0) characteristic of shelf-seam / neon hallucinations.
        - Edge Crop Guard: filters out truncated boxes clipped by camera frame boundary.
     5. Weighted Box Fusion (WBF):
        - Merges overlapping query duplicates to stabilize boundary box position shifts.
-    6. Boundary Shrinkage:
+    6. Span Fragment Merging:
+       - Reconnects separated alphanumeric characters (e.g. 'D' and '17' -> 'D17') into a unified placard boundary.
+    7. Context Margin Recalibration:
+       - Expands inner text crops ('C1') out to encompass the outer physical placard plate.
+    8. Boundary Shrinkage:
        - Contracts bounding boxes by 4% (0.96) to eliminate background edge noise.
-    7. Formats output coordinates according to bbox_format (e.g. [ymin, xmin, ymax, xmax]).
+    9. Formats output coordinates according to bbox_format (e.g. [ymin, xmin, ymax, xmax]).
     """
     class_list = classes or CLASS_NAMES
 
@@ -276,7 +369,7 @@ def postprocess_output(
     class_ids = np.argmax(scores, axis=-1)
     max_scores = np.max(scores, axis=-1)
 
-    # 1. Filter by confidence threshold
+    # 1. Filter by confidence threshold & geometric constraints
     keep_indices = np.where(max_scores >= conf_threshold)[0]
     cand_boxes: List[List[float]] = []
     cand_scores: List[float] = []
@@ -338,6 +431,14 @@ def postprocess_output(
         f_scores = np.array(cand_scores, dtype=np.float32)
         f_classes = np.array(cand_classes, dtype=int)
 
+    # 3. Fragment Merging: Join split tokens (e.g. 'D' and '17' on the same placard)
+    if enable_fragment_merge and len(f_boxes) > 1:
+        f_boxes, f_scores, f_classes = merge_adjacent_placard_fragments(
+            f_boxes,
+            f_scores,
+            f_classes
+        )
+
     detections: List[Dict[str, Any]] = []
 
     for i in range(len(f_boxes)):
@@ -345,7 +446,11 @@ def postprocess_output(
         score = float(f_scores[i])
         cid = int(f_classes[i])
 
-        # 3. Border Shrinkage (contracts box by 4% to suppress background rack noise)
+        # 4. Context Margin Recalibration: Expand text-only crops to full placard plate
+        if enable_margin_recalibration:
+            x1, y1, x2, y2 = recalibrate_placard_margins([x1, y1, x2, y2])
+
+        # 5. Border Shrinkage: Minor contraction to suppress background rack noise
         if enable_shrinkage and shrink_factor < 1.0:
             mid_x = (x1 + x2) / 2.0
             mid_y = (y1 + y2) / 2.0
@@ -356,7 +461,7 @@ def postprocess_output(
             x2 = min(1.0, mid_x + shrunk_w / 2.0)
             y2 = min(1.0, mid_y + shrunk_h / 2.0)
 
-        # 4. Coordinate Formatting
+        # 6. Coordinate Formatting
         if pixel_coordinates:
             px_x1 = round(float(x1 * orig_w), 2)
             px_y1 = round(float(y1 * orig_h), 2)
