@@ -169,6 +169,59 @@ def preprocess_image(
 # ==============================================================================
 # 3. POST-PROCESSING & COORDINATE CALIBRATION
 # ==============================================================================
+def apply_weighted_box_fusion(
+    boxes: np.ndarray,
+    scores: np.ndarray,
+    labels: np.ndarray,
+    iou_thresh: float = 0.55
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Merges overlapping candidate queries from the DETR decoder weighted by confidence scores.
+    Resolves jitter and boundary box position shifts between adjacent queries.
+    """
+    if len(boxes) == 0:
+        return np.empty((0, 4), dtype=np.float32), np.empty((0,), dtype=np.float32), np.empty((0,), dtype=int)
+
+    fused_boxes, fused_scores, fused_labels = [], [], []
+    for lbl in np.unique(labels):
+        idx = np.where(labels == lbl)[0]
+        lbl_boxes = boxes[idx]
+        lbl_scores = scores[idx]
+
+        order = np.argsort(lbl_scores)[::-1]
+        lbl_boxes = lbl_boxes[order]
+        lbl_scores = lbl_scores[order]
+
+        used = np.zeros(len(lbl_boxes), dtype=bool)
+        for i in range(len(lbl_boxes)):
+            if used[i]:
+                continue
+            cluster = [i]
+            for j in range(i + 1, len(lbl_boxes)):
+                if used[j]:
+                    continue
+                bA, bB = lbl_boxes[i], lbl_boxes[j]
+                xA = max(bA[0], bB[0]); yA = max(bA[1], bB[1])
+                xB = min(bA[2], bB[2]); yB = min(bA[3], bB[3])
+                inter = max(0.0, xB - xA) * max(0.0, yB - yA)
+                areaA = (bA[2] - bA[0]) * (bA[3] - bA[1])
+                areaB = (bB[2] - bB[0]) * (bB[3] - bB[1])
+                denom = areaA + areaB - inter
+                if denom > 0 and (inter / denom) >= iou_thresh:
+                    cluster.append(j)
+                    used[j] = True
+            used[i] = True
+            c_boxes = lbl_boxes[cluster]
+            c_scores = lbl_scores[cluster]
+            total_s = np.sum(c_scores)
+            fused_box = np.sum(c_boxes * c_scores[:, None], axis=0) / total_s
+            fused_boxes.append(fused_box)
+            fused_scores.append(float(np.max(c_scores)))
+            fused_labels.append(lbl)
+
+    return np.array(fused_boxes, dtype=np.float32), np.array(fused_scores, dtype=np.float32), np.array(fused_labels, dtype=int)
+
+
 def postprocess_output(
     raw_output: np.ndarray,
     orig_w: int,
@@ -180,30 +233,30 @@ def postprocess_output(
     filter_edge_crops: bool = True,
     edge_crop_margin: float = 0.005,
     enable_shrinkage: bool = True,
-    shrink_factor: float = 0.96
+    shrink_factor: float = 0.96,
+    enable_wbf: bool = True,
+    wbf_iou_thresh: float = 0.55,
+    min_area_ratio: float = 0.0001,
+    max_area_ratio: float = 0.75,
+    min_aspect_ratio: float = 0.15,
+    max_aspect_ratio: float = 12.0
 ) -> List[Dict[str, Any]]:
     """
-    Production Post-Processing conforming to tagdet_rt unified output [1, 18900, 7]:
+    Production Post-Processing conforming to tagdet_rt unified output [1, 18900, 7]
+    with multi-stage false-positive suppression:
     1. Unpacks tensor: columns 0..3 are normalized bbox coords [cx, cy, w, h] in [0, 1].
        Columns 4..6 are class probability scores [s_0, s_1, s_2].
     2. Sigmoid normalization applied if scores are unnormalized logits.
-    3. Finds best class ID and maximum score per prediction query.
-    4. Filters out queries below conf_threshold and discards zero-padded rows (w <= 0 or h <= 0).
-    5. Converts coordinates from [cx, cy, w, h] to [x1, y1, x2, y2].
-    6. Edge Crop Guard: Filters out false positives clipped by camera frame boundary.
-    7. Boundary Shrinkage: Contracts bounding boxes by 4% (0.96) to eliminate background noise.
-    8. Formats output coordinates according to bbox_format (e.g. [ymin, xmin, ymax, xmax]).
-
-    Returns:
-        List of detection dictionaries:
-        [
-            {
-                "description": "location_tag",
-                "score": 0.942,
-                "bbox": [ymin, xmin, ymax, xmax],
-                "class_id": 2
-            }, ...
-        ]
+    3. Confidence thresholding: isolates high-confidence detections (default >= 0.75).
+    4. Hallucination Suppression:
+       - Area ratio guard: filters out microscopic background noise (<0.01% frame) and massive full-frame boxes (>75% frame).
+       - Aspect ratio guard: eliminates abnormal slivers (w/h < 0.15 or w/h > 12.0) characteristic of shelf-seam hallucinations.
+       - Edge Crop Guard: filters out truncated boxes clipped by camera frame boundary.
+    5. Weighted Box Fusion (WBF):
+       - Merges overlapping query duplicates to stabilize boundary box position shifts.
+    6. Boundary Shrinkage:
+       - Contracts bounding boxes by 4% (0.96) to eliminate background edge noise.
+    7. Formats output coordinates according to bbox_format (e.g. [ymin, xmin, ymax, xmax]).
     """
     class_list = classes or CLASS_NAMES
 
@@ -223,9 +276,11 @@ def postprocess_output(
     class_ids = np.argmax(scores, axis=-1)
     max_scores = np.max(scores, axis=-1)
 
-    # Filter by confidence threshold
+    # 1. Filter by confidence threshold
     keep_indices = np.where(max_scores >= conf_threshold)[0]
-    detections: List[Dict[str, Any]] = []
+    cand_boxes: List[List[float]] = []
+    cand_scores: List[float] = []
+    cand_classes: List[int] = []
 
     for idx in keep_indices:
         cid = int(class_ids[idx])
@@ -234,6 +289,16 @@ def postprocess_output(
 
         # Discard zero-padded rows from the 18900 tensor
         if w <= 0.0 or h <= 0.0 or score <= 0.0:
+            continue
+
+        # Geometric Hallucination Guard: Area bounds
+        box_area = w * h
+        if box_area < min_area_ratio or box_area > max_area_ratio:
+            continue
+
+        # Aspect Ratio Guard: Reject abnormal slivers
+        aspect_ratio = w / (h + 1e-6)
+        if aspect_ratio < min_aspect_ratio or aspect_ratio > max_aspect_ratio:
             continue
 
         # Convert cxcywh (normalized 0..1) to x1, y1, x2, y2 (normalized 0..1)
@@ -253,7 +318,34 @@ def postprocess_output(
             if touches_border:
                 continue
 
-        # Border Shrinkage (contracts box by 4% to suppress background jitter)
+        cand_boxes.append([x1, y1, x2, y2])
+        cand_scores.append(score)
+        cand_classes.append(cid)
+
+    if not cand_boxes:
+        return []
+
+    # 2. Weighted Box Fusion: Merge duplicate queries to stabilize position shifts
+    if enable_wbf and len(cand_boxes) > 1:
+        f_boxes, f_scores, f_classes = apply_weighted_box_fusion(
+            np.array(cand_boxes, dtype=np.float32),
+            np.array(cand_scores, dtype=np.float32),
+            np.array(cand_classes, dtype=int),
+            iou_thresh=wbf_iou_thresh
+        )
+    else:
+        f_boxes = np.array(cand_boxes, dtype=np.float32)
+        f_scores = np.array(cand_scores, dtype=np.float32)
+        f_classes = np.array(cand_classes, dtype=int)
+
+    detections: List[Dict[str, Any]] = []
+
+    for i in range(len(f_boxes)):
+        x1, y1, x2, y2 = f_boxes[i]
+        score = float(f_scores[i])
+        cid = int(f_classes[i])
+
+        # 3. Border Shrinkage (contracts box by 4% to suppress background rack noise)
         if enable_shrinkage and shrink_factor < 1.0:
             mid_x = (x1 + x2) / 2.0
             mid_y = (y1 + y2) / 2.0
@@ -264,12 +356,12 @@ def postprocess_output(
             x2 = min(1.0, mid_x + shrunk_w / 2.0)
             y2 = min(1.0, mid_y + shrunk_h / 2.0)
 
-        # Scale to pixel coordinates if enabled
+        # 4. Coordinate Formatting
         if pixel_coordinates:
-            px_x1 = round(x1 * orig_w, 2)
-            px_y1 = round(y1 * orig_h, 2)
-            px_x2 = round(x2 * orig_w, 2)
-            px_y2 = round(y2 * orig_h, 2)
+            px_x1 = round(float(x1 * orig_w), 2)
+            px_y1 = round(float(y1 * orig_h), 2)
+            px_x2 = round(float(x2 * orig_w), 2)
+            px_y2 = round(float(y2 * orig_h), 2)
 
             if bbox_format == "ymin_xmin_ymax_xmax":
                 formatted_box = [px_y1, px_x1, px_y2, px_x2]
@@ -281,13 +373,13 @@ def postprocess_output(
                 formatted_box = [px_y1, px_x1, px_y2, px_x2]
         else:
             if bbox_format == "ymin_xmin_ymax_xmax":
-                formatted_box = [round(y1, 4), round(x1, 4), round(y2, 4), round(x2, 4)]
+                formatted_box = [round(float(y1), 4), round(float(x1), 4), round(float(y2), 4), round(float(x2), 4)]
             elif bbox_format == "xyxy":
-                formatted_box = [round(x1, 4), round(y1, 4), round(x2, 4), round(y2, 4)]
+                formatted_box = [round(float(x1), 4), round(float(y1), 4), round(float(x2), 4), round(float(y2), 4)]
             elif bbox_format == "xywh":
-                formatted_box = [round(x1, 4), round(y1, 4), round(x2 - x1, 4), round(y2 - y1, 4)]
+                formatted_box = [round(float(x1), 4), round(float(y1), 4), round(float(x2 - x1), 4), round(float(y2 - y1), 4)]
             else:
-                formatted_box = [round(y1, 4), round(x1, 4), round(y2, 4), round(x2, 4)]
+                formatted_box = [round(float(y1), 4), round(float(x1), 4), round(float(y2), 4), round(float(x2), 4)]
 
         class_name = class_list[cid] if cid < len(class_list) else f"class_{cid}"
 
@@ -298,14 +390,8 @@ def postprocess_output(
             "class_id": cid
         })
 
-    # Sort descending by score
     detections.sort(key=lambda d: d["score"], reverse=True)
     return detections
-
-
-# ==============================================================================
-# 4. INFERENCE BACKENDS (ONNX, TENSORRT PLAN, TRITON gRPC)
-# ==============================================================================
 
 class BaseRFDetrEngine:
     """Abstract interface for all RF-DETR inference backends."""
