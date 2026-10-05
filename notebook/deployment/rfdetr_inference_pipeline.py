@@ -173,7 +173,7 @@ def postprocess_output(
     raw_output: np.ndarray,
     orig_w: int,
     orig_h: int,
-    conf_threshold: float = 0.40,
+    conf_threshold: float = 0.71,
     classes: Optional[List[str]] = None,
     pixel_coordinates: bool = True,
     bbox_format: str = "ymin_xmin_ymax_xmax",
@@ -312,7 +312,7 @@ class BaseRFDetrEngine:
     def predict_image(
         self,
         image: Union[Image.Image, np.ndarray, str, Path],
-        conf_threshold: float = 0.40,
+        conf_threshold: float = 0.71,
         **postprocess_kwargs
     ) -> List[Dict[str, Any]]:
         raise NotImplementedError
@@ -349,7 +349,7 @@ class RFDetrONNXEngine(BaseRFDetrEngine):
     def predict_image(
         self,
         image: Union[Image.Image, np.ndarray, str, Path],
-        conf_threshold: float = 0.40,
+        conf_threshold: float = 0.71,
         **postprocess_kwargs
     ) -> List[Dict[str, Any]]:
         tensor, orig_w, orig_h = preprocess_image(image)
@@ -393,7 +393,7 @@ class RFDetrTensorRTEngine(BaseRFDetrEngine):
     def predict_image(
         self,
         image: Union[Image.Image, np.ndarray, str, Path],
-        conf_threshold: float = 0.40,
+        conf_threshold: float = 0.71,
         **postprocess_kwargs
     ) -> List[Dict[str, Any]]:
         tensor, orig_w, orig_h = preprocess_image(image)
@@ -443,7 +443,7 @@ class RFDetrTritonEngine(BaseRFDetrEngine):
     def predict_image(
         self,
         image: Union[Image.Image, np.ndarray, str, Path],
-        conf_threshold: float = 0.40,
+        conf_threshold: float = 0.71,
         **postprocess_kwargs
     ) -> List[Dict[str, Any]]:
         tensor, orig_w, orig_h = preprocess_image(image)
@@ -500,7 +500,7 @@ if __name__ == "__main__":
     parser.add_argument("--model-path", default="deployment/models/rfdetr_model.onnx", help="Path to ONNX or PLAN model file")
     parser.add_argument("--triton-url", default="localhost:8001", help="Triton gRPC endpoint")
     parser.add_argument("--image", default=None, help="Input test image path")
-    parser.add_argument("--conf", type=float, default=0.40, help="Confidence threshold")
+    parser.add_argument("--conf", type=float, default=0.71, help="Confidence threshold")
     args = parser.parse_args()
 
     print("=" * 80)
