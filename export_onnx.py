@@ -156,7 +156,7 @@ def patch_projector_layernorm(model):
         logger.info(f"Patched {count} Projector LayerNorm modules for static ONNX tracing.")
 
 
-def export(weights_path: str, output_path: str, height: int = 640, width: int = 480, internal_res: int = 560, num_classes: int = 3, opset: int = 17, input_name: str = "images", output_name: str = "output", dynamic_batch: bool = True):
+def export(weights_path: str, output_path: str, height: int = 640, width: int = 480, internal_res: int = 560, num_classes: int = 3, opset: int = 17, input_name: str = "images", output_name: str = "output0", dynamic_batch: bool = True):
     out_file = Path(output_path)
     out_file.parent.mkdir(parents=True, exist_ok=True)
 
@@ -288,7 +288,7 @@ if __name__ == "__main__":
     parser.add_argument("--num-classes", type=int, default=3, help="Number of classes (default: 3)")
     parser.add_argument("--opset", type=int, default=17, help="ONNX opset version (default: 17)")
     parser.add_argument("--input-name", type=str, default="images", help="Input tensor name (default: images)")
-    parser.add_argument("--output-name", type=str, default="output", help="Output tensor name (e.g. output or outpute)")
+    parser.add_argument("--output-name", type=str, default="output0", help="Output tensor name (default: output0)")
     parser.add_argument("--static-batch", action="store_true", help="Force static batch size 1 instead of dynamic batching")
 
     args = parser.parse_args()

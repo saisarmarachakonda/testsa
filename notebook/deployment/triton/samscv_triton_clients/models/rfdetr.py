@@ -79,7 +79,7 @@ class RFDetrTritonClient(TritonClient):
         input_width: int = DEFAULT_INPUT_WIDTH,
         conf_threshold: float = 0.75,
         input_name: str = "images",
-        output_name: str = "output",
+        output_name: str = "output0",
         scores_output_name: Optional[str] = None,
         boxes_output_name: Optional[str] = None,
         bbox_format: str = "ymin_xmin_ymax_xmax",  # standard SamsCV convention

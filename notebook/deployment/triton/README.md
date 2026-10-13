@@ -28,8 +28,8 @@ flowchart TD
     - Name: `"images"`
     - Shape: `[1, 3, 640, 480]` (dtype: `float32`)
   - **Output**:
-    - Name: `"output"`
-    - Shape: `[1, 18900, 7]` (dtype: `float32`, `[cx, cy, w, h, s_0, s_1, s_2]` zero-padded)
+    - Name: `"output0"`
+    - Shape: `[batch_size, 18900, 7]` (dtype: `float32`, `[cx, cy, w, h, s_0, s_1, s_2]` zero-padded)
 
 ---
 
@@ -42,12 +42,12 @@ Ensure `config.pbtxt` is configured with matching tensor names and dims:
 ```protobuf
 name: "tagdet_rt"
 platform: "tensorrt_plan"
-max_batch_size: 1
+max_batch_size: 2
 input [
   { name: "images", data_type: TYPE_FP32, dims: [ 3, 640, 480 ] }
 ]
 output [
-  { name: "output", data_type: TYPE_FP32, dims: [ 18900, 7 ] }
+  { name: "output0", data_type: TYPE_FP32, dims: [ 18900, 7 ] }
 ]
 ```
 
