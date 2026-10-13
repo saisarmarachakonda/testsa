@@ -1,6 +1,6 @@
 name: "tagdet_rt"
 backend: "onnxruntime"
-max_batch_size: 1
+max_batch_size: 2
 
 input [
   {

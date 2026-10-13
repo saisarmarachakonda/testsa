@@ -156,15 +156,17 @@ def patch_projector_layernorm(model):
         logger.info(f"Patched {count} Projector LayerNorm modules for static ONNX tracing.")
 
 
-def export(weights_path: str, output_path: str, height: int = 640, width: int = 480, internal_res: int = 560, num_classes: int = 3, opset: int = 17, input_name: str = "images", output_name: str = "output"):
+def export(weights_path: str, output_path: str, height: int = 640, width: int = 480, internal_res: int = 560, num_classes: int = 3, opset: int = 17, input_name: str = "images", output_name: str = "output", dynamic_batch: bool = True):
     out_file = Path(output_path)
     out_file.parent.mkdir(parents=True, exist_ok=True)
 
+    batch_str = "dynamic (batch_size)" if dynamic_batch else "1 (static)"
     logger.info("==============================================================================")
     logger.info("RF-DETR ONNX Model Exporter strictly conforming to tagdet_rt Triton schema")
     logger.info("==============================================================================")
-    logger.info(f" • Input Binding:    name='{input_name}', dims=[3, {height}, {width}], shape=[1, 3, {height}, {width}]")
-    logger.info(f" • Output Binding:   name='{output_name}', dims=[18900, 7], shape=[1, 18900, 7]")
+    logger.info(f" • Input Binding:    name='{input_name}', dims=[3, {height}, {width}], shape=[{batch_str}, 3, {height}, {width}]")
+    logger.info(f" • Output Binding:   name='{output_name}', dims=[18900, 7], shape=[{batch_str}, 18900, 7]")
+    logger.info(f" • Dynamic Batching: {dynamic_batch}")
     logger.info(f" • Model Weights:    {weights_path}")
     logger.info(f" • Destination ONNX: {output_path}")
     logger.info("==============================================================================")
@@ -221,11 +223,17 @@ def export(weights_path: str, output_path: str, height: int = 640, width: int = 
     # Apply patches
     patch_projector_layernorm(wrapper)
 
-    # 4. Dummy input strictly with [1, 3, height, width]
+    # 4. Dummy input with [1, 3, height, width]
     dummy_input = torch.randn(1, 3, height, width, dtype=torch.float32, device=device)
 
+    # Dynamic axes mapping
+    dynamic_axes = {
+        input_name: {0: "batch_size"},
+        output_name: {0: "batch_size"}
+    } if dynamic_batch else None
+
     # 5. Export to ONNX
-    logger.info(f"Exporting to ONNX via opset {opset}...")
+    logger.info(f"Exporting to ONNX via opset {opset} (Dynamic axes: {dynamic_axes})...")
     import warnings
     warnings.filterwarnings("ignore", category=torch.jit.TracerWarning)
 
@@ -236,6 +244,7 @@ def export(weights_path: str, output_path: str, height: int = 640, width: int = 
             str(out_file),
             input_names=[input_name],
             output_names=[output_name],
+            dynamic_axes=dynamic_axes,
             opset_version=opset,
             do_constant_folding=True
         )
@@ -245,6 +254,7 @@ def export(weights_path: str, output_path: str, height: int = 640, width: int = 
     # 6. Verification with ONNX Runtime
     try:
         import onnxruntime as ort
+        import numpy as np
         logger.info("Running ONNX Runtime verification...")
         session = ort.InferenceSession(str(out_file), providers=["CPUExecutionProvider"])
         inp = session.get_inputs()[0]
@@ -252,10 +262,16 @@ def export(weights_path: str, output_path: str, height: int = 640, width: int = 
         logger.info(f" • Input:  name='{inp.name}', shape={inp.shape}, type={inp.type}")
         logger.info(f" • Output: name='{out.name}', shape={out.shape}, type={out.type}")
         assert inp.name == input_name, f"Input name mismatch: {inp.name} != '{input_name}'"
-        assert inp.shape == [1, 3, height, width], f"Input shape mismatch: {inp.shape} != [1, 3, {height}, {width}]"
         assert out.name == output_name, f"Output name mismatch: {out.name} != '{output_name}'"
-        assert out.shape == [1, 18900, 7], f"Output shape mismatch: {out.shape} != [1, 18900, 7]"
-        logger.info("✓ Verified! Exactly matches Triton config.pbtxt specifications.")
+        
+        # Test batch 1 and batch 2
+        test_batches = [1, 2] if dynamic_batch else [1]
+        for b in test_batches:
+            dummy_np = np.random.randn(b, 3, height, width).astype(np.float32)
+            res = session.run([output_name], {input_name: dummy_np})[0]
+            assert res.shape == (b, 18900, 7), f"Batch {b} failed: {res.shape} != ({b}, 18900, 7)"
+            logger.info(f" • Verified Batch {b} Inference: Output shape is {res.shape}")
+        logger.info("✓ Verified! Exactly matches Triton config.pbtxt specifications with dynamic batching.")
     except ImportError:
         logger.info("onnxruntime not installed. Skipped live session verification.")
     except Exception as e:
@@ -273,6 +289,7 @@ if __name__ == "__main__":
     parser.add_argument("--opset", type=int, default=17, help="ONNX opset version (default: 17)")
     parser.add_argument("--input-name", type=str, default="images", help="Input tensor name (default: images)")
     parser.add_argument("--output-name", type=str, default="output", help="Output tensor name (e.g. output or outpute)")
+    parser.add_argument("--static-batch", action="store_true", help="Force static batch size 1 instead of dynamic batching")
 
     args = parser.parse_args()
     export(
@@ -284,5 +301,6 @@ if __name__ == "__main__":
         num_classes=args.num_classes,
         opset=args.opset,
         input_name=args.input_name,
-        output_name=args.output_name
+        output_name=args.output_name,
+        dynamic_batch=not args.static_batch
     )
