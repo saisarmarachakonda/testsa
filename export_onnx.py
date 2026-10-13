@@ -5,7 +5,7 @@ RF-DETR ONNX Export Script strictly conforming to Triton tagdet_rt specification
 ================================================================================
 Triton config.pbtxt requirements:
   name: "tagdet_rt"
-  platform: "tensorrt_plan"
+  platform: "onnxruntime_onnx"
   max_batch_size: 1
   input [
     {
@@ -16,14 +16,29 @@ Triton config.pbtxt requirements:
   ]
   output [
     {
-      name: "output"
+      name: "output0"
       data_type: TYPE_FP32
       dims: [ 18900, 7 ]
     }
   ]
+  instance_group [
+    {
+      count: 1
+      kind: KIND_GPU
+    }
+  ]
+  default_model_filename: "model.onnx"
+
+Key Technical Conformance Details:
+  - In Triton, max_batch_size: 1 enables batching. Triton prepends a batch dimension.
+  - The ONNX model input must be 4D: ['batch_size', 3, 640, 480], where axis 0 is dynamic ('batch_size').
+    (If axis 0 is static [1, 3, 640, 480], Triton errors: "Batching is enabled, but ONNX input images is fixed at [1, 3, 640, 480]").
+  - The ONNX model output must be 3D: ['batch_size', 18900, 7], where axis 0 is dynamic ('batch_size')
+    and axes 1 and 2 are strictly static integers (18900, 7).
+  - During single-request inference, Triton feeds (1, 3, 640, 480) and receives (1, 18900, 7).
 
 Usage:
-  python export_onnx.py --weights path/to/best_model.pth --output deployment/models/rfdetr_model.onnx
+  python export_onnx.py --weights path/to/best_model.pth --output model.onnx
 """
 
 import os
@@ -44,10 +59,10 @@ logger = logging.getLogger("ExportONNX")
 class TagDetRTProductionWrapper(nn.Module):
     """
     Drop-in production wrapper for Triton tagdet_rt configuration:
-    - Input:  images [1, 3, 640, 480] (FP32 NCHW)
+    - Input:  images [B, 3, 640, 480] (FP32 NCHW, batch dimension B is dynamic in ONNX)
     - Interpolates internally to (internal_size, internal_size) for DINOv2 ViT backbone (e.g. 560x560).
     - Runs RF-DETR core model to predict 300 queries (boxes: [cx, cy, w, h], scores: sigmoid(logits)).
-    - Concatenates [cx, cy, w, h, s_0, s_1, s_2] -> [1, 300, 7].
+    - Concatenates [cx, cy, w, h, s_0, s_1, s_2] -> [B, 300, 7].
     - Zero-pads rows from 300 to 18900 to match Triton output binding dims [18900, 7].
     """
     def __init__(self, core_model, internal_size: int = 560, total_rows: int = 18900, num_classes: int = 3):
@@ -58,7 +73,12 @@ class TagDetRTProductionWrapper(nn.Module):
         self.num_classes = num_classes
 
     def forward(self, images: torch.Tensor) -> torch.Tensor:
-        # 1. Bilinear resize from [1, 3, 640, 480] to internal backbone resolution [1, 3, internal_size, internal_size]
+        # Handle both 4D [B, 3, H, W] and unbatched 3D [3, H, W] gracefully
+        is_3d = (images.dim() == 3)
+        if is_3d:
+            images = images.unsqueeze(0)
+
+        # 1. Bilinear resize from [B, 3, 640, 480] to internal backbone resolution [B, 3, internal_size, internal_size]
         x = F.interpolate(images, size=(self.internal_size, self.internal_size), mode="bilinear", align_corners=False)
 
         # 2. Forward pass through RF-DETR
@@ -84,6 +104,9 @@ class TagDetRTProductionWrapper(nn.Module):
             output = torch.cat([det_300, zeros], dim=1)  # [B, 18900, 7]
         else:
             output = det_300
+
+        if is_3d:
+            output = output.squeeze(0)
 
         return output
 
@@ -156,17 +179,16 @@ def patch_projector_layernorm(model):
         logger.info(f"Patched {count} Projector LayerNorm modules for static ONNX tracing.")
 
 
-def export(weights_path: str, output_path: str, height: int = 640, width: int = 480, internal_res: int = 560, num_classes: int = 3, opset: int = 17, input_name: str = "images", output_name: str = "output0", dynamic_batch: bool = True):
+def export(weights_path: str, output_path: str, height: int = 640, width: int = 480, internal_res: int = 560, num_classes: int = 3, opset: int = 17, input_name: str = "images", output_name: str = "output0"):
     out_file = Path(output_path)
     out_file.parent.mkdir(parents=True, exist_ok=True)
 
-    batch_str = "dynamic (batch_size)" if dynamic_batch else "1 (static)"
     logger.info("==============================================================================")
     logger.info("RF-DETR ONNX Model Exporter strictly conforming to tagdet_rt Triton schema")
     logger.info("==============================================================================")
-    logger.info(f" • Input Binding:    name='{input_name}', dims=[3, {height}, {width}], shape=[{batch_str}, 3, {height}, {width}]")
-    logger.info(f" • Output Binding:   name='{output_name}', dims=[18900, 7], shape=[{batch_str}, 18900, 7]")
-    logger.info(f" • Dynamic Batching: {dynamic_batch}")
+    logger.info(f" • Input Binding:    name='{input_name}', dims=[3, {height}, {width}], shape=['batch_size', 3, {height}, {width}]")
+    logger.info(f" • Output Binding:   name='{output_name}', dims=[18900, 7], shape=['batch_size', 18900, 7]")
+    logger.info(f" • Triton Batching:  max_batch_size: 1 (dynamic batch axis 0)")
     logger.info(f" • Model Weights:    {weights_path}")
     logger.info(f" • Destination ONNX: {output_path}")
     logger.info("==============================================================================")
@@ -223,14 +245,15 @@ def export(weights_path: str, output_path: str, height: int = 640, width: int = 
     # Apply patches
     patch_projector_layernorm(wrapper)
 
-    # 4. Dummy input with [1, 3, height, width]
+    # 4. Dummy input with 4 dimensions [1, 3, height, width]
     dummy_input = torch.randn(1, 3, height, width, dtype=torch.float32, device=device)
 
-    # Dynamic axes mapping
+    # Dynamic axes mapping: dynamic batch size on axis 0 for both input and output
+    # Triton max_batch_size: 1 requires the batch dimension to be dynamic in ONNX.
     dynamic_axes = {
         input_name: {0: "batch_size"},
         output_name: {0: "batch_size"}
-    } if dynamic_batch else None
+    }
 
     # 5. Export to ONNX
     logger.info(f"Exporting to ONNX via opset {opset} (Dynamic axes: {dynamic_axes})...")
@@ -249,18 +272,39 @@ def export(weights_path: str, output_path: str, height: int = 640, width: int = 
             do_constant_folding=True
         )
 
-    # Post-process ONNX proto to strictly fix prediction dimensions [18900, 7]
+    # Post-process ONNX proto to strictly fix dimensions for Triton:
+    # Input:  ['batch_size', 3, height, width]
+    # Output: ['batch_size', 18900, 7]
     try:
         import onnx
         onnx_model = onnx.load(str(out_file))
+
+        for inp_tensor in onnx_model.graph.input:
+            if inp_tensor.name == input_name:
+                dims = inp_tensor.type.tensor_type.shape.dim
+                if len(dims) == 4:
+                    dims[0].dim_param = "batch_size"
+                    dims[0].ClearField("dim_value")
+                    dims[1].ClearField("dim_param")
+                    dims[1].dim_value = 3
+                    dims[2].ClearField("dim_param")
+                    dims[2].dim_value = height
+                    dims[3].ClearField("dim_param")
+                    dims[3].dim_value = width
+
         for out_tensor in onnx_model.graph.output:
-            if out_tensor.name == output_name and len(out_tensor.type.tensor_type.shape.dim) >= 3:
-                out_tensor.type.tensor_type.shape.dim[1].ClearField("dim_param")
-                out_tensor.type.tensor_type.shape.dim[1].dim_value = 18900
-                out_tensor.type.tensor_type.shape.dim[2].ClearField("dim_param")
-                out_tensor.type.tensor_type.shape.dim[2].dim_value = 7
+            if out_tensor.name == output_name:
+                dims = out_tensor.type.tensor_type.shape.dim
+                if len(dims) == 3:
+                    dims[0].dim_param = "batch_size"
+                    dims[0].ClearField("dim_value")
+                    dims[1].ClearField("dim_param")
+                    dims[1].dim_value = 18900
+                    dims[2].ClearField("dim_param")
+                    dims[2].dim_value = 7
+
         onnx.save(onnx_model, str(out_file))
-        logger.info("✓ Fixed ONNX output metadata to strictly conform to dims [18900, 7] for Triton.")
+        logger.info("✓ Fixed ONNX metadata: Input ['batch_size', 3, 640, 480], Output ['batch_size', 18900, 7] strictly adhering to Triton config.pbtxt (max_batch_size: 1).")
     except Exception as e:
         logger.warning(f"Note on ONNX proto dimension fixing: {e}")
 
@@ -270,7 +314,7 @@ def export(weights_path: str, output_path: str, height: int = 640, width: int = 
     try:
         import onnxruntime as ort
         import numpy as np
-        logger.info("Running ONNX Runtime verification...")
+        logger.info("Running ONNX Runtime verification with input shape (1, 3, 640, 480)...")
         session = ort.InferenceSession(str(out_file), providers=["CPUExecutionProvider"])
         inp = session.get_inputs()[0]
         out = session.get_outputs()[0]
@@ -278,15 +322,21 @@ def export(weights_path: str, output_path: str, height: int = 640, width: int = 
         logger.info(f" • Output: name='{out.name}', shape={out.shape}, type={out.type}")
         assert inp.name == input_name, f"Input name mismatch: {inp.name} != '{input_name}'"
         assert out.name == output_name, f"Output name mismatch: {out.name} != '{output_name}'"
-        
-        # Test batch 1 and batch 2
-        test_batches = [1, 2] if dynamic_batch else [1]
-        for b in test_batches:
-            dummy_np = np.random.randn(b, 3, height, width).astype(np.float32)
-            res = session.run([output_name], {input_name: dummy_np})[0]
-            assert res.shape == (b, 18900, 7), f"Batch {b} failed: {res.shape} != ({b}, 18900, 7)"
-            logger.info(f" • Verified Batch {b} Inference: Output shape is {res.shape}")
-        logger.info("✓ Verified! Exactly matches Triton config.pbtxt specifications (max_batch_size: 1).")
+        assert len(inp.shape) == 4 and inp.shape[1:] == [3, height, width], f"Input shape mismatch: {inp.shape} != ['batch_size', 3, {height}, {width}]"
+        assert len(out.shape) == 3 and out.shape[1:] == [18900, 7], f"Output shape mismatch: {out.shape} != ['batch_size', 18900, 7]"
+
+        # Test batch 1 inference (which Triton runs since max_batch_size: 1)
+        dummy_np = np.random.randn(1, 3, height, width).astype(np.float32)
+        res = session.run([output_name], {input_name: dummy_np})[0]
+        assert res.shape == (1, 18900, 7), f"Inference failed: {res.shape} != (1, 18900, 7)"
+        logger.info(f" • Verified Batch 1 Inference: Output shape is {res.shape}")
+
+        # Check padding
+        active_rows = res[0, :300, :]
+        padded_rows = res[0, 300:, :]
+        assert np.all(padded_rows == 0.0), "Padded rows must be strictly zeros!"
+        logger.info(f" • Verified Output Rows: 300 active detection queries + {18900 - 300} zero-padded rows.")
+        logger.info("✓ Verified! Exactly matches Triton config.pbtxt specifications (max_batch_size: 1, dims: [3, 640, 480] -> [18900, 7]).")
     except ImportError:
         logger.info("onnxruntime not installed. Skipped live session verification.")
     except Exception as e:
@@ -304,7 +354,6 @@ if __name__ == "__main__":
     parser.add_argument("--opset", type=int, default=17, help="ONNX opset version (default: 17)")
     parser.add_argument("--input-name", type=str, default="images", help="Input tensor name (default: images)")
     parser.add_argument("--output-name", type=str, default="output0", help="Output tensor name (default: output0)")
-    parser.add_argument("--static-batch", action="store_true", help="Force static batch dimension (disables dynamic batch axis)")
 
     args = parser.parse_args()
     export(
@@ -316,6 +365,5 @@ if __name__ == "__main__":
         num_classes=args.num_classes,
         opset=args.opset,
         input_name=args.input_name,
-        output_name=args.output_name,
-        dynamic_batch=not args.static_batch
+        output_name=args.output_name
     )
