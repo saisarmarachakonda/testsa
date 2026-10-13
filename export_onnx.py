@@ -296,7 +296,7 @@ def export(weights_path: str, output_path: str, height: int = 640, width: int = 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Export RF-DETR to ONNX matching tagdet_rt Triton schema")
     parser.add_argument("--weights", type=str, default="best_model.pth", help="Path to .pth checkpoint")
-    parser.add_argument("--output", type=str, default="deployment/models/rfdetr_model.onnx", help="Output .onnx path")
+    parser.add_argument("--output", type=str, default="model.onnx", help="Output .onnx path (default: model.onnx)")
     parser.add_argument("--height", type=int, default=640, help="Input height (default: 640)")
     parser.add_argument("--width", type=int, default=480, help="Input width (default: 480)")
     parser.add_argument("--internal-res", type=int, default=560, help="Backbone internal resolution (default: 560)")
