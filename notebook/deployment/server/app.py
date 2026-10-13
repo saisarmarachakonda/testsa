@@ -43,9 +43,12 @@ session = None
 input_name = None
 output_names = []
 
+INPUT_HEIGHT = int(os.getenv("INPUT_HEIGHT", "640"))
+INPUT_WIDTH = int(os.getenv("INPUT_WIDTH", "480"))
+
 @app.on_event("startup")
 def startup_engines():
-    global session, input_name, output_names
+    global session, input_name, output_names, INPUT_HEIGHT, INPUT_WIDTH
 
     # 1. Initialize RF-DETR ONNX Session
     if not os.path.exists(MODEL_PATH):
@@ -56,9 +59,17 @@ def startup_engines():
         opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
         opts.intra_op_num_threads = int(os.getenv("ORT_NUM_THREADS", str(os.cpu_count() or 4)))
         session = ort.InferenceSession(MODEL_PATH, sess_options=opts, providers=providers)
-        input_name = session.get_inputs()[0].name
+        inp_meta = session.get_inputs()[0]
+        input_name = inp_meta.name
         output_names = [o.name for o in session.get_outputs()]
-        print(f"[STARTUP] Loaded RF-DETR ONNX model '{MODEL_PATH}' using {session.get_providers()[0]}")
+        
+        # Dynamically adapt to model input bindings [B, C, H, W]
+        if len(inp_meta.shape) == 4:
+            if isinstance(inp_meta.shape[2], int) and inp_meta.shape[2] > 0:
+                INPUT_HEIGHT = inp_meta.shape[2]
+            if isinstance(inp_meta.shape[3], int) and inp_meta.shape[3] > 0:
+                INPUT_WIDTH = inp_meta.shape[3]
+        print(f"[STARTUP] Loaded RF-DETR ONNX model '{MODEL_PATH}' using {session.get_providers()[0]} (Input: [3, {INPUT_HEIGHT}, {INPUT_WIDTH}])")
 
 # Response Schemas
 class Detection(BaseModel):
@@ -100,8 +111,8 @@ def get_metadata():
     }
 
 def preprocess_image(pil_img: Image.Image) -> np.ndarray:
-    """Preprocess PIL image for RF-DETR ONNX inference."""
-    resized = pil_img.resize((RESOLUTION, RESOLUTION), Image.BILINEAR)
+    """Preprocess PIL image for RF-DETR ONNX inference strictly matching [1, 3, H, W]."""
+    resized = pil_img.resize((INPUT_WIDTH, INPUT_HEIGHT), Image.BILINEAR)
     img_np = np.array(resized, dtype=np.float32) / 255.0
     
     # ImageNet normalization

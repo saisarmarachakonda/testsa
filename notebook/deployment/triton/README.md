@@ -26,29 +26,28 @@ flowchart TD
 - Inspect graph signature with `onnxruntime`:
   - **Input**:
     - Name: `"images"`
-    - Shape: `[1, 3, 1008, 1008]` (or `[1, 3, 560, 560]`, dtype: `float32`)
-  - **Outputs**:
-    - Name: `"scores"` — Shape: `[1, 300, 3]` (dtype: `float32`)
-    - Name: `"boxes"` — Shape: `[1, 300, 4]` (cx, cy, w, h normalized [0, 1])
+    - Shape: `[1, 3, 640, 480]` (dtype: `float32`)
+  - **Output**:
+    - Name: `"output"`
+    - Shape: `[1, 18900, 7]` (dtype: `float32`, `[cx, cy, w, h, s_0, s_1, s_2]` zero-padded)
 
 ---
 
 ### Step 2: Convert ONNX → `model.plan` with `trtexec`
 Convert using `convert_trtexec.sh` inside an environment matching the Triton GPU node's architecture (e.g., Tesla T4 on AKS):
 ```bash
-./convert_trtexec.sh rfdetr_model.onnx model.plan 1008 4
+./convert_trtexec.sh rfdetr_model.onnx model.plan 640 480
 ```
 Ensure `config.pbtxt` is configured with matching tensor names and dims:
 ```protobuf
 name: "tagdet_rt"
 platform: "tensorrt_plan"
-max_batch_size: 4
+max_batch_size: 1
 input [
-  { name: "images", data_type: TYPE_FP32, dims: [ 3, 1008, 1008 ] }
+  { name: "images", data_type: TYPE_FP32, dims: [ 3, 640, 480 ] }
 ]
 output [
-  { name: "scores", data_type: TYPE_FP32, dims: [ 300, 3 ] },
-  { name: "boxes",  data_type: TYPE_FP32, dims: [ 300, 4 ] }
+  { name: "output", data_type: TYPE_FP32, dims: [ 18900, 7 ] }
 ]
 ```
 
