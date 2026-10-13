@@ -42,7 +42,7 @@ Ensure `config.pbtxt` is configured with matching tensor names and dims:
 ```protobuf
 name: "tagdet_rt"
 platform: "tensorrt_plan"
-max_batch_size: 2
+max_batch_size: 1
 input [
   { name: "images", data_type: TYPE_FP32, dims: [ 3, 640, 480 ] }
 ]

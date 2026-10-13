@@ -1,6 +1,6 @@
 name: "tagdet_rt"
-backend: "onnxruntime"
-max_batch_size: 2
+platform: "onnxruntime_onnx"
+max_batch_size: 1
 
 input [
   {
@@ -25,4 +25,4 @@ instance_group [
   }
 ]
 
-default_model_filename: "rfdetr_model.onnx"
+default_model_filename: "model.onnx"

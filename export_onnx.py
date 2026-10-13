@@ -156,7 +156,7 @@ def patch_projector_layernorm(model):
         logger.info(f"Patched {count} Projector LayerNorm modules for static ONNX tracing.")
 
 
-def export(weights_path: str, output_path: str, height: int = 640, width: int = 480, internal_res: int = 560, num_classes: int = 3, opset: int = 17, input_name: str = "images", output_name: str = "output0", dynamic_batch: bool = True):
+def export(weights_path: str, output_path: str, height: int = 640, width: int = 480, internal_res: int = 560, num_classes: int = 3, opset: int = 17, input_name: str = "images", output_name: str = "output0", dynamic_batch: bool = False):
     out_file = Path(output_path)
     out_file.parent.mkdir(parents=True, exist_ok=True)
 
@@ -249,6 +249,21 @@ def export(weights_path: str, output_path: str, height: int = 640, width: int = 
             do_constant_folding=True
         )
 
+    # Post-process ONNX proto to strictly fix prediction dimensions [18900, 7]
+    try:
+        import onnx
+        onnx_model = onnx.load(str(out_file))
+        for out_tensor in onnx_model.graph.output:
+            if out_tensor.name == output_name and len(out_tensor.type.tensor_type.shape.dim) >= 3:
+                out_tensor.type.tensor_type.shape.dim[1].ClearField("dim_param")
+                out_tensor.type.tensor_type.shape.dim[1].dim_value = 18900
+                out_tensor.type.tensor_type.shape.dim[2].ClearField("dim_param")
+                out_tensor.type.tensor_type.shape.dim[2].dim_value = 7
+        onnx.save(onnx_model, str(out_file))
+        logger.info("✓ Fixed ONNX output metadata to strictly conform to dims [18900, 7] for Triton.")
+    except Exception as e:
+        logger.warning(f"Note on ONNX proto dimension fixing: {e}")
+
     logger.info(f"✓ ONNX export successfully created: {out_file} ({out_file.stat().st_size / 1e6:.1f} MB)")
 
     # 6. Verification with ONNX Runtime
@@ -271,7 +286,7 @@ def export(weights_path: str, output_path: str, height: int = 640, width: int = 
             res = session.run([output_name], {input_name: dummy_np})[0]
             assert res.shape == (b, 18900, 7), f"Batch {b} failed: {res.shape} != ({b}, 18900, 7)"
             logger.info(f" • Verified Batch {b} Inference: Output shape is {res.shape}")
-        logger.info("✓ Verified! Exactly matches Triton config.pbtxt specifications with dynamic batching.")
+        logger.info("✓ Verified! Exactly matches Triton config.pbtxt specifications (max_batch_size: 1).")
     except ImportError:
         logger.info("onnxruntime not installed. Skipped live session verification.")
     except Exception as e:
@@ -289,7 +304,7 @@ if __name__ == "__main__":
     parser.add_argument("--opset", type=int, default=17, help="ONNX opset version (default: 17)")
     parser.add_argument("--input-name", type=str, default="images", help="Input tensor name (default: images)")
     parser.add_argument("--output-name", type=str, default="output0", help="Output tensor name (default: output0)")
-    parser.add_argument("--static-batch", action="store_true", help="Force static batch size 1 instead of dynamic batching")
+    parser.add_argument("--dynamic-batch", action="store_true", help="Enable dynamic batching (default: static batch size 1)")
 
     args = parser.parse_args()
     export(
@@ -302,5 +317,5 @@ if __name__ == "__main__":
         opset=args.opset,
         input_name=args.input_name,
         output_name=args.output_name,
-        dynamic_batch=not args.static_batch
+        dynamic_batch=args.dynamic_batch
     )
