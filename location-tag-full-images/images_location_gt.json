@@ -1,0 +1,120 @@
+[
+  {
+    "content": "https://deviras.blob.core.windows.net/location-tag-price-tag-images/location/4795/063e4a28-5bc5-47d3-be2b-1ce9cb56c910.jpg?se=2026-08-20T16%",
+    "annotation": [
+      {
+        "label": [
+          "blue_aisle"
+        ],
+        "shape": "rectangle",
+        "att": {},
+        "points": [
+          [
+            0.488985,
+            0.484136
+          ],
+          [
+            0.533125,
+            0.484136
+          ],
+          [
+            0.533125,
+            0.505495
+          ],
+          [
+            0.488985,
+            0.505495
+          ]
+        ],
+        "notes": "D10",
+        "imageWidth": 3008,
+        "imageHeight": 4096
+      },
+      {
+        "label": [
+          "location_tag"
+        ],
+        "shape": "rectangle",
+        "att": {},
+        "points": [
+          [
+            0.2,
+            0.488
+          ],
+          [
+            0.244,
+            0.488
+          ],
+          [
+            0.244,
+            0.509
+          ],
+          [
+            0.2,
+            0.509
+          ]
+        ],
+        "notes": "04-12 (Sub-32px White Tag)",
+        "imageWidth": 3008,
+        "imageHeight": 4096
+      },
+      {
+        "label": [
+          "location_tag"
+        ],
+        "shape": "rectangle",
+        "att": {},
+        "points": [
+          [
+            0.65,
+            0.725
+          ],
+          [
+            0.676,
+            0.725
+          ],
+          [
+            0.676,
+            0.737
+          ],
+          [
+            0.65,
+            0.737
+          ]
+        ],
+        "notes": "B02 (Micro White Tag <14px)",
+        "imageWidth": 3008,
+        "imageHeight": 4096
+      },
+      {
+        "label": [
+          "location_tag"
+        ],
+        "shape": "rectangle",
+        "att": {},
+        "points": [
+          [
+            0.32,
+            0.235
+          ],
+          [
+            0.406,
+            0.235
+          ],
+          [
+            0.406,
+            0.279
+          ],
+          [
+            0.32,
+            0.279
+          ]
+        ],
+        "notes": "A01-08 (Standard White Tag >=32px)",
+        "imageWidth": 3008,
+        "imageHeight": 4096
+      }
+    ],
+    "extras": {}
+  }
+]
